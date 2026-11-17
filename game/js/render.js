@@ -1,7 +1,7 @@
 // Isometric renderer: backdrop, terrain, paths, scenery, rides, coasters, guests, light and overlays.
 import { N, DX, DY, RIDES, SCN, COASTERS, TRACK_COLORS } from './data.js';
 import { S, idx, inB, accessTiles } from './world.js';
-import { pieceSamples, posAt, trainDist, STATION_HEAD, CAR_LEN, endState, isLeft, isWide, corkAngle } from './coaster.js';
+import { pieceSamples, posAt, trainDist, STATION_HEAD, CAR_LEN, endState, isTurn, exitDir, bankAt, corkAngle } from './coaster.js';
 import { guestPos } from './guests.js';
 import { darkness } from './sim.js';
 import * as SP from './sprites.js';
@@ -170,18 +170,20 @@ const hash = (x, y) => { let h = (x * 374761393 + y * 668265263) >>> 0; h = ((h 
 function buildGeo(c, pi) {
   const p = c.pieces[pi], sm = pieceSamples(c, pi), st = styleOf(c);
   const n = sm.length, L = [], R = [], C = [], SH = [], ties = [];
-  const w = 0.13, zo = 0.3, cork = p.t === 'cork', loop = p.t === 'loop';
+  const w = 0.13, zo = 0.3, cork = p.t === 'cork', loop = p.t === 'loop', ed = exitDir(p), wide = p.t === 'wl' || p.t === 'wr';
   const tieEvery = loop || cork ? 2 : c.ctype === 'wood' ? 1 : 2;
   const cellOf = (s) => idx(Math.max(0, Math.min(N - 1, Math.floor(s.x))), Math.max(0, Math.min(N - 1, Math.floor(s.y))));
   for (let k = 0; k < n; k++) {
     const a = sm[Math.max(0, k - 1)], b = sm[Math.min(n - 1, k + 1)];
-    const tx = b.x - a.x, ty = b.y - a.y;
+    let tx = b.x - a.x, ty = b.y - a.y;
+    // at the two ends the rails point exactly along the grid, so they meet the next piece without a notch
+    if (!loop && !cork) { if (k === 0) { tx = DX[p.d]; ty = DY[p.d]; } else if (k === n - 1) { tx = DX[ed]; ty = DY[ed]; } }
     let nx, ny;
     if (loop || cork) { nx = -DY[p.d]; ny = DX[p.d]; }
     else { const l = Math.hypot(tx, ty) || 1; nx = -ty / l; ny = tx / l; }
     const s = sm[k];
     let zl = 0, zr = 0, ww = w;
-    if (p.bank) { const b2 = Math.sin((k / (n - 1)) * Math.PI) * (isWide(p) ? 0.5 : 0.35) * (isLeft(p) ? 1 : -1); zl = b2; zr = -b2; }
+    if (p.bank) { zl = bankAt(c, pi, k / (n - 1)); zr = -zl; }
     if (cork) { const th = corkAngle(k / (n - 1)); ww = w * Math.cos(th); zl = 0.26 * Math.sin(th); zr = -zl; }
     L.push(isoX(s.x + nx * ww, s.y + ny * ww), isoY(s.x + nx * ww, s.y + ny * ww, s.z + zo + zl));
     R.push(isoX(s.x - nx * ww, s.y - ny * ww), isoY(s.x - nx * ww, s.y - ny * ww, s.z + zo + zr));
@@ -192,7 +194,7 @@ function buildGeo(c, pi) {
   }
   // which stretch of the piece lies on which tile, so each tile draws its own part in the right order
   let parts = null;
-  if (isWide(p) || cork) {
+  if (wide || cork) {
     parts = new Map();
     for (let k = 0; k < n - 1; k++) {
       const ci = cellOf({ x: (sm[k].x + sm[k + 1].x) / 2, y: (sm[k].y + sm[k + 1].y) / 2 });
@@ -213,7 +215,7 @@ function buildGeo(c, pi) {
     const gi = idx(p.x, p.y);
     loopSup = [[q1.x, q1.y, q1.z, heff(gi)], [q2.x, q2.y, q2.z, heff(gi)]];
   } else if (cork) { addSup(2); addSup(n - 3); addSup((n - 1) >> 1); }
-  else if (isWide(p)) { addSup(2); addSup((n - 1) >> 1); addSup(n - 3); }
+  else if (wide) { addSup(2); addSup((n - 1) >> 1); addSup(n - 3); }
   else {
     addSup((n - 1) >> 1);
     if (c.ctype === 'wood') addSup(0);
@@ -640,7 +642,15 @@ export function render(ctx, time, ui) {
       let sx, sy, sz = 0;
       if (p.t === 'loop') { sx = -DY[p.d]; sy = DX[p.d]; }
       else if (p.t === 'cork') { const th = corkAngle(tp.u); sx = -DY[p.d] * Math.cos(th); sy = DX[p.d] * Math.cos(th); sz = Math.sin(th); }
-      else { const l = Math.hypot(tp.tx, tp.ty) || 1; sx = -tp.ty / l; sy = tp.tx / l; }
+      else {
+        const l = Math.hypot(tp.tx, tp.ty) || 1;
+        sx = -tp.ty / l; sy = tp.tx / l;
+        if (p.bank) {
+          // lean into the turn with the rails: the outer rail is lifted by this much over half the track width
+          const tan = (bankAt(c, tp.pi, tp.u) * 2) / 0.52, m = Math.hypot(1, tan);
+          sx /= m; sy /= m; sz = tan / m;
+        }
+      }
       const v = c.sim.v[Math.min(c.sim.segs, tp.k)] || 0;
       const car = {
         car: 1, c, x: tp.x, y: tp.y, z: tp.z, tx: tp.tx, ty: tp.ty, tz: tp.tz, sx, sy, sz, d: tp.x + tp.y + 0.01,

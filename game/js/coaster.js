@@ -348,6 +348,19 @@ function joint(a, b) {
   const m = (a + b) / 2;
   return Math.sign(m) * Math.min(Math.abs(m), 3 * Math.min(Math.abs(a), Math.abs(b)));
 }
+/**
+ * Banking at u = 0..1 along piece i: how far the outer rail is lifted, in levels (the inner one drops
+ * by the same). Positive in a left turn. The tilt holds through turns that follow each other the same
+ * way and eases in and out only where the banking starts and ends.
+ */
+export function bankAt(c, i, u) {
+  const p = c.pieces[i];
+  if (!p.bank || !isTurn(p)) return 0;
+  const same = (q) => q.bank && isTurn(q) && isLeft(q) === isLeft(p);
+  const ease = (x) => { const t = Math.max(0, Math.min(1, x / 0.5)); return t * t * (3 - 2 * t); };
+  const k = (same(neighbor(c, i, -1)) && i > 0 ? 1 : ease(u)) * (same(neighbor(c, i, 1)) && (i < c.pieces.length - 1 || c.closed) ? 1 : ease(1 - u));
+  return (isLeft(p) ? 1 : -1) * (isWide(p) ? 0.2 : 0.17) * k;
+}
 /** How far a corkscrew has turned (radians) at u = 0..1 along it. Eased so it joins straight track smoothly. */
 export function corkAngle(u) { return Math.PI * 2 * u * u * (3 - 2 * u); }
 
