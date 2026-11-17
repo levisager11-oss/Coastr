@@ -50,12 +50,28 @@ const SFX = {
   goal: (t) => [523, 659, 784, 1047].forEach((f, i) => tone(f, t + i * 0.1, 0.28, 'triangle', 0.32, sfxGain)),
   unlock: (t) => [659, 880, 1175].forEach((f, i) => tone(f, t + i * 0.08, 0.2, 'sine', 0.3, sfxGain)),
   whoosh: (t) => tone(180, t, 0.7, 'sawtooth', 0.07, sfxGain, 520),
+  boom: (t) => { noise(t, 0.5, 0.22, 900, 160); tone(90, t, 0.35, 'sine', 0.3, sfxGain, 45); },
 };
+// a burst of filtered noise that sweeps downwards: fireworks
+let noiseBuf = null;
+function noise(t0, dur, vol, f0, f1) {
+  if (!noiseBuf) {
+    noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  const src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+  src.buffer = noiseBuf;
+  f.type = 'lowpass'; f.frequency.setValueAtTime(f0, t0); f.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+  g.gain.setValueAtTime(vol, t0); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  src.connect(f); f.connect(g); g.connect(sfxGain);
+  src.start(t0); src.stop(t0 + dur + 0.02);
+}
 let lastSfx = {};
 export function sfx(name) {
   if (!ac || !audio.sfx || ac.state !== 'running') return;
   const now = ac.currentTime;
-  if (lastSfx[name] && now - lastSfx[name] < 0.04) return;
+  if (lastSfx[name] && now - lastSfx[name] < (name === 'boom' ? 0.18 : 0.04)) return;
   lastSfx[name] = now;
   SFX[name](now);
 }

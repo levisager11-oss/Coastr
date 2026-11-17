@@ -80,9 +80,16 @@ export function queueMax(o) {
 }
 
 // ---------- guests ----------
+// the little picture that pops up over a guest's head with each kind of thought
+const EMOTE = {
+  th_great: 'smile', th_wow: 'star', th_sick: 'sick', th_expensive: 'money', th_wait: 'clock', th_nofood: 'need', th_nodrink: 'need',
+  th_notoilet: 'need', th_norides: 'bored', th_broke: 'money', th_unhappy: 'angry', th_tired: 'zzz', th_rest: 'zzz', th_yum: 'heart',
+  th_gift: 'heart', th_hat: 'heart', th_fire: 'star',
+};
 export function think(g, key, param) {
   if (g.cc > 0 && g.thoughts.length) return;
   g.cc = 6;
+  if (EMOTE[key]) { g.em = EMOTE[key]; g.emT = 2.4; }
   g.thoughts.unshift([key, param || '']);
   if (g.thoughts.length > 6) g.thoughts.pop();
   S.thoughts[key] = (S.thoughts[key] || 0) + 1;
@@ -98,7 +105,7 @@ export function makeGuest(tx, ty) {
     hunger: rnd(5, 45), thirst: rnd(5, 45), toilet: rnd(0, 35), nausea: 0, energy: rnd(75, 100),
     happy: rnd(60, 80), cash: rnd(60, 130), tol, sus: rnd(0.5, 1.5), stay: rnd(120, 240), tIn: 0,
     thoughts: [], rode: {}, rides: 0, shirt: pick(SHIRTS), skin: pick(SKINS), hair: pick(HAIRS),
-    gift: 0, walk: rnd(0, 6),
+    gift: 0, hat: 0, walk: rnd(0, 6), em: null, emT: 0,
   };
   return g;
 }
@@ -155,7 +162,8 @@ function chooseTarget(g, i) {
   if ((g.nausea > 55 || g.energy < 30) && reach('bench', i)) return { kind: 'bench' };
   if (g.nausea > 70) return null; // too queasy for rides, just walk it off
   if (g.cash > 15 && Math.random() < 0.05) {
-    const need = Math.random() < 0.5 && !g.gift ? 'gift' : 'treat';
+    const r = Math.random();
+    const need = r < 0.35 && !g.gift ? 'gift' : r < 0.65 && !g.hat ? 'hat' : 'treat';
     if (reach('cat:' + need, i)) return { kind: 'cat', need };
   }
   if (Math.random() < 0.15) return null;
@@ -197,7 +205,7 @@ function stallNextTo(tx, ty, need) {
   }
   return null;
 }
-const MAX_PAY = { hunger: 8, thirst: 6, treat: 6, gift: 12, toilet: 1 };
+const MAX_PAY = { hunger: 8, thirst: 6, treat: 6, gift: 12, hat: 14, toilet: 1 };
 
 function arrive(g) {
   const t = g.target;
@@ -217,10 +225,14 @@ function arrive(g) {
     }
     g.cash -= o.price; earn(o.price, 'stalls'); o.customers++; o.income += o.price;
     if (t.need === 'hunger') { g.hunger = Math.max(0, g.hunger - 75); g.thirst += 8; g.toilet += 8; g.happy += 5; think(g, 'th_yum'); }
-    else if (t.need === 'thirst') { g.thirst = Math.max(0, g.thirst - 80); g.toilet += 22; g.happy += 3; }
+    else if (t.need === 'thirst') {
+      g.thirst = Math.max(0, g.thirst - 80); g.toilet += 22; g.happy += 3;
+      if (o.type === 'coffee') g.energy = Math.min(100, g.energy + 30);
+    }
     else if (t.need === 'treat') { g.hunger = Math.max(0, g.hunger - 30); g.thirst = Math.max(0, g.thirst - 30); g.happy += 7; think(g, 'th_yum'); }
     else if (t.need === 'toilet') { g.toilet = 0; g.happy += 3; }
     else if (t.need === 'gift') { g.gift = 1 + ((Math.random() * 5) | 0); g.happy += 10; think(g, 'th_gift'); }
+    else if (t.need === 'hat') { g.hat = 1 + ((Math.random() * 5) | 0); g.happy += 8; think(g, 'th_hat'); }
     g.st = 'pause'; g.timer = rnd(1.5, 3);
     return;
   }
@@ -269,6 +281,7 @@ function decide(g) {
 
 export function updateGuest(g, dt) {
   g.tIn += dt; g.cc -= dt; g.cool -= dt;
+  if (g.emT > 0) g.emT -= dt;
   g.hunger = Math.min(100, g.hunger + 0.22 * dt);
   g.thirst = Math.min(100, g.thirst + 0.28 * dt);
   g.toilet = Math.min(100, g.toilet + 0.13 * dt);

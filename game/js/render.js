@@ -1,13 +1,20 @@
-// Isometric renderer: terrain, paths, scenery, rides, coasters, guests, overlays.
-import { N, DX, DY, RIDES, SCN, COASTERS } from './data.js';
-import { S, idx, inB } from './world.js';
-import { pieceSamples, posAt, distAtTime, STATION_HEAD, CAR_LEN, endState, isTurn } from './coaster.js';
+// Isometric renderer: backdrop, terrain, paths, scenery, rides, coasters, guests, light and overlays.
+import { N, DX, DY, RIDES, SCN, COASTERS, TRACK_COLORS } from './data.js';
+import { S, idx, inB, accessTiles } from './world.js';
+import { pieceSamples, posAt, trainDist, STATION_HEAD, CAR_LEN, endState, isLeft, isWide, corkAngle } from './coaster.js';
 import { guestPos } from './guests.js';
-import { drawRide, drawStall, drawScenery, setOrigin, RIDE_TOP } from './sprites.js';
+import { darkness } from './sim.js';
+import * as SP from './sprites.js';
+import { drawFxWorld, drawFxGlow, drawFxScreen, fxWet, fxSnow } from './fx.js';
+
+const { drawRide, drawStall, drawScenery, setOrigin, RIDE_TOP } = SP;
 
 export const cam = { x: 0, y: 600, zoom: 1 };
 export const view = { w: 800, h: 600, dpr: 1 };
+export const look = { night: true }; // settings that only change the picture
 const HW = 32, HH = 16, ZH = 16;
+const SEA = 0.4; // height of the ground around the park, in levels
+const FONT = 'ui-rounded, "Segoe UI", system-ui, sans-serif';
 
 export const isoX = (x, y) => (x - y) * HW;
 export const isoY = (x, y, z) => (x + y) * HH - z * ZH;
@@ -32,8 +39,8 @@ export function pickTile(px, py) {
   return inB(x, y) ? { x, y } : null;
 }
 export function objTop(o) {
-  if (o.kind === 'coaster') return 2.2;
-  return o.kind === 'stall' ? 2.4 : RIDE_TOP[o.type];
+  if (o.kind === 'coaster') return 3.3;
+  return o.kind === 'stall' ? 2.4 : RIDE_TOP[o.type] || 3;
 }
 export function objCenter(o) {
   if (o.kind === 'coaster') {
@@ -88,13 +95,69 @@ export function pickThing(px, py) {
   return bc ? { kind: 'obj', id: bc.id } : null;
 }
 
-// ---------- drawing helpers ----------
-function diamond(ctx, x, y, z) {
-  const sx = isoX(x, y), sy = isoY(x, y, z);
-  ctx.beginPath();
-  ctx.moveTo(sx, sy); ctx.lineTo(sx + HW, sy + HH); ctx.lineTo(sx, sy + HH * 2); ctx.lineTo(sx - HW, sy + HH);
-  ctx.closePath();
+// ---------- colours ----------
+export function shade(hex, amt) {
+  const n = parseInt(hex.slice(1), 16);
+  let r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+  const f = (v) => Math.max(0, Math.min(255, Math.round(amt < 0 ? v * (1 + amt) : v + (255 - v) * amt)));
+  r = f(r); g = f(g); b = f(b);
+  return '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
 }
+function mix(a, b, t) {
+  const p = parseInt(a.slice(1), 16), q = parseInt(b.slice(1), 16);
+  const c = (s) => Math.round(((p >> s) & 255) + (((q >> s) & 255) - ((p >> s) & 255)) * t);
+  return '#' + ((1 << 24) | (c(16) << 16) | (c(8) << 8) | c(0)).toString(16).slice(1);
+}
+// One look per kind of scenario. ground / hi = low and high land, side = cliff faces (left, right),
+// far = the land or sea around the park (top and bottom of the screen), mark = little strokes on it.
+const THEMES = {
+  meadow: {
+    ground: '#7cc653', hi: '#b3ea8f', sideL: '#c99b5f', sideR: '#a87c48', lip: '#62a83f', shore: '#e6d7a0', water: '#55bdf0', deep: '#3fa6e2',
+    foam: 'rgba(255,255,255,0.75)', far: ['#3795d6', '#6cc4ef'], mark: 'rgba(255,255,255,0.42)', sea: true,
+    path: '#f1dfb5', pathEdge: '#c9ad78', tuft: '#5aa83d', dots: ['#ffffff', '#ffd23f', '#ff8fab'],
+  },
+  lagoon: {
+    ground: '#74c768', hi: '#b2eba2', sideL: '#d8b877', sideR: '#b79655', lip: '#58a850', shore: '#f2e4b4', water: '#45cbd9', deep: '#27acc9',
+    foam: 'rgba(255,255,255,0.8)', far: ['#1f93c4', '#5fd0e2'], mark: 'rgba(255,255,255,0.45)', sea: true,
+    path: '#f4e6c2', pathEdge: '#cdb27f', tuft: '#4f9f48', dots: ['#ffffff', '#ffd23f', '#ff70a6'],
+  },
+  desert: {
+    ground: '#e6c483', hi: '#f7e6ba', sideL: '#cf8e5a', sideR: '#ae6c41', lip: '#d1a765', shore: '#c9d6a0', water: '#3fc6c4', deep: '#27aeb3',
+    foam: 'rgba(255,255,255,0.7)', far: ['#e9cc90', '#f5e3b8'], mark: 'rgba(176,128,70,0.3)', sea: false,
+    path: '#d99f76', pathEdge: '#a8704b', tuft: '#c9a45f', dots: ['#b98d57', '#f3d9a4', '#a3b86c'],
+  },
+  snow: {
+    ground: '#e8f0f9', hi: '#ffffff', sideL: '#a3b4c9', sideR: '#8598b0', lip: '#cfdceb', shore: '#d5e6f4', water: '#8fd3f2', deep: '#6dbde6',
+    foam: 'rgba(255,255,255,0.9)', far: ['#6eb4e0', '#b6e0f5'], mark: 'rgba(255,255,255,0.7)', sea: true,
+    path: '#cdbb9c', pathEdge: '#9c8a6b', tuft: '#c9d8e8', dots: ['#ffffff', '#d6e6f5', '#ffffff'],
+  },
+};
+for (const k in THEMES) {
+  const T = THEMES[k];
+  T.pal = [];
+  for (let l = 0; l < 7; l++) {
+    const base = mix(T.ground, T.hi, (l / 6) * 0.85);
+    T.pal.push([base, shade(base, -0.035), shade(base, -0.06), shade(base, 0.05)]);
+  }
+  T.pathB = shade(T.path, -0.04); T.lipR = shade(T.lip, -0.08); T.stairL = shade(T.path, -0.1); T.stairR = shade(T.path, -0.18);
+  T.shoreB = shade(T.shore, -0.04);
+}
+export const themeOf = (name) => THEMES[name] || THEMES.meadow;
+const styles = new Map();
+/** Colours of a coaster: its type's own, or the paint the player picked. */
+function styleOf(c) {
+  const key = c.ctype + (c.col | 0);
+  let st = styles.get(key);
+  if (!st) {
+    const T = COASTERS[c.ctype], pal = TRACK_COLORS[c.col | 0];
+    st = pal ? { ...T, rail: pal[0], tie: pal[1], car: pal[2] } : { ...T };
+    st.railHi = shade(st.rail, 0.45); st.carDark = shade(st.car, -0.22); st.carHi = shade(st.car, 0.35);
+    styles.set(key, st);
+  }
+  return st;
+}
+
+// ---------- drawing helpers ----------
 function rectPath(ctx, x, y, w, h, z) {
   ctx.beginPath();
   ctx.moveTo(isoX(x, y), isoY(x, y, z)); ctx.lineTo(isoX(x + w, y), isoY(x + w, y, z));
@@ -105,100 +168,120 @@ const hash = (x, y) => { let h = (x * 374761393 + y * 668265263) >>> 0; h = ((h 
 
 // ---------- track geometry ----------
 function buildGeo(c, pi) {
-  const p = c.pieces[pi], sm = pieceSamples(c, pi), T = COASTERS[c.ctype];
-  const n = sm.length, L = [], R = [], C = [], ties = [];
-  const w = 0.13, zo = 0.3;
+  const p = c.pieces[pi], sm = pieceSamples(c, pi), st = styleOf(c);
+  const n = sm.length, L = [], R = [], C = [], SH = [], ties = [];
+  const w = 0.13, zo = 0.3, cork = p.t === 'cork', loop = p.t === 'loop';
+  const tieEvery = loop || cork ? 2 : c.ctype === 'wood' ? 1 : 2;
+  const cellOf = (s) => idx(Math.max(0, Math.min(N - 1, Math.floor(s.x))), Math.max(0, Math.min(N - 1, Math.floor(s.y))));
   for (let k = 0; k < n; k++) {
     const a = sm[Math.max(0, k - 1)], b = sm[Math.min(n - 1, k + 1)];
-    let tx = b.x - a.x, ty = b.y - a.y;
+    const tx = b.x - a.x, ty = b.y - a.y;
     let nx, ny;
-    if (p.t === 'loop') { nx = -DY[p.d]; ny = DX[p.d]; }
+    if (loop || cork) { nx = -DY[p.d]; ny = DX[p.d]; }
     else { const l = Math.hypot(tx, ty) || 1; nx = -ty / l; ny = tx / l; }
     const s = sm[k];
-    let zl = 0, zr = 0;
-    if (p.bank) { const b2 = Math.sin((k / (n - 1)) * Math.PI) * 0.35 * (p.t === 'l' ? 1 : -1); zl = b2; zr = -b2; }
-    L.push(isoX(s.x + nx * w, s.y + ny * w), isoY(s.x + nx * w, s.y + ny * w, s.z + zo + zl));
-    R.push(isoX(s.x - nx * w, s.y - ny * w), isoY(s.x - nx * w, s.y - ny * w, s.z + zo + zr));
+    let zl = 0, zr = 0, ww = w;
+    if (p.bank) { const b2 = Math.sin((k / (n - 1)) * Math.PI) * (isWide(p) ? 0.5 : 0.35) * (isLeft(p) ? 1 : -1); zl = b2; zr = -b2; }
+    if (cork) { const th = corkAngle(k / (n - 1)); ww = w * Math.cos(th); zl = 0.26 * Math.sin(th); zr = -zl; }
+    L.push(isoX(s.x + nx * ww, s.y + ny * ww), isoY(s.x + nx * ww, s.y + ny * ww, s.z + zo + zl));
+    R.push(isoX(s.x - nx * ww, s.y - ny * ww), isoY(s.x - nx * ww, s.y - ny * ww, s.z + zo + zr));
     C.push(isoX(s.x, s.y), isoY(s.x, s.y, s.z + zo));
-    const tieEvery = p.t === 'loop' ? 2 : c.ctype === 'wood' ? 1 : 2;
+    const g = heff(cellOf(s));
+    if (s.z - g > 0.45 && p.t !== 'station') SH.push(isoX(s.x, s.y), isoY(s.x, s.y, g + 0.02)); else SH.push(NaN, NaN);
     if (k % tieEvery === 0) ties.push(k);
   }
-  // supports
-  const sup = [];
-  const addSup = (s) => {
-    const tx = Math.max(0, Math.min(N - 1, Math.floor(s.x))), ty = Math.max(0, Math.min(N - 1, Math.floor(s.y)));
-    const g = heff(idx(tx, ty));
-    if (s.z - g > 0.5) sup.push([s.x, s.y, s.z + zo - 0.1, g]);
-  };
-  if (p.t === 'loop') { addSup({ x: sm[4].x, y: sm[4].y, z: sm[4].z }); }
-  else {
-    addSup(sm[(n - 1) >> 1]);
-    if (c.ctype === 'wood') addSup(sm[0]);
+  // which stretch of the piece lies on which tile, so each tile draws its own part in the right order
+  let parts = null;
+  if (isWide(p) || cork) {
+    parts = new Map();
+    for (let k = 0; k < n - 1; k++) {
+      const ci = cellOf({ x: (sm[k].x + sm[k + 1].x) / 2, y: (sm[k].y + sm[k + 1].y) / 2 });
+      const r = parts.get(ci);
+      if (r) r[1] = k + 1; else parts.set(ci, [k, k + 1]);
+    }
   }
+  const sup = [];
+  const addSup = (k) => {
+    const s = sm[k], ci = cellOf(s), g = heff(ci);
+    if (s.z - g > 0.5) sup.push([s.x, s.y, s.z + zo - 0.1, g, k]);
+  };
   let loopSup = null;
-  if (p.t === 'loop') {
+  if (loop) {
+    addSup(4);
     // a frame holding the loop: from its side points down to the ground
     const q1 = sm[Math.round(n * 0.32)], q2 = sm[Math.round(n * 0.68)];
     const gi = idx(p.x, p.y);
     loopSup = [[q1.x, q1.y, q1.z, heff(gi)], [q2.x, q2.y, q2.z, heff(gi)]];
+  } else if (cork) { addSup(2); addSup(n - 3); addSup((n - 1) >> 1); }
+  else if (isWide(p)) { addSup(2); addSup((n - 1) >> 1); addSup(n - 3); }
+  else {
+    addSup((n - 1) >> 1);
+    if (c.ctype === 'wood') addSup(0);
   }
-  return { L, R, C, ties, sup, loopSup, n, T };
+  return { L, R, C, SH, ties, sup, loopSup, n, st, parts, tv: S.tv };
 }
 
-function strokeLine(ctx, a) {
+function strokeRange(ctx, a, k0, k1) {
   ctx.beginPath();
-  ctx.moveTo(a[0], a[1]);
-  for (let k = 2; k < a.length; k += 2) ctx.lineTo(a[k], a[k + 1]);
+  ctx.moveTo(a[k0 * 2], a[k0 * 2 + 1]);
+  for (let k = k0 + 1; k <= k1; k++) ctx.lineTo(a[k * 2], a[k * 2 + 1]);
   ctx.stroke();
 }
 
-export function drawPiece(ctx, c, pi, alpha) {
+/** Draws one piece, or only the part of it that lies on tile `cell`. */
+export function drawPiece(ctx, c, pi, alpha, cell) {
   const p = c.pieces[pi];
-  const g = p.geo || (p.geo = buildGeo(c, pi));
-  const T = g.T;
+  let g = p.geo;
+  if (!g || g.tv !== S.tv) g = p.geo = buildGeo(c, pi);
+  const T = g.st;
+  let k0 = 0, k1 = g.n - 1;
+  if (g.parts && cell !== undefined) {
+    const r = g.parts.get(cell);
+    if (!r) return;
+    k0 = r[0]; k1 = r[1];
+  }
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   if (alpha !== undefined) ctx.globalAlpha = alpha;
-  // station platform
-  if (p.t === 'station') {
-    const z = p.h0 + 0.12;
-    rectPath(ctx, p.x, p.y, 1, 1, z);
-    ctx.fillStyle = '#e4e7ee'; ctx.fill();
-    ctx.strokeStyle = 'rgba(60,60,90,0.25)'; ctx.lineWidth = 1; ctx.stroke();
-    // yellow safety edges along the track
-    const nx = -DY[p.d] * 0.3, ny = DX[p.d] * 0.3;
-    ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = 2;
-    for (const sgn of [-1, 1]) {
-      const ax = p.x + 0.5 - DX[p.d] * 0.5 + nx * sgn, ay = p.y + 0.5 - DY[p.d] * 0.5 + ny * sgn;
-      ctx.beginPath();
-      ctx.moveTo(isoX(ax, ay), isoY(ax, ay, z));
-      ctx.lineTo(isoX(ax + DX[p.d], ay + DY[p.d]), isoY(ax + DX[p.d], ay + DY[p.d], z));
-      ctx.stroke();
+  // shadow on the ground under raised track
+  if (fine) {
+    ctx.strokeStyle = 'rgba(20,35,45,0.15)'; ctx.lineWidth = 7;
+    ctx.beginPath();
+    let pen = false;
+    for (let k = k0; k <= k1; k++) {
+      const x = g.SH[k * 2];
+      if (x !== x) { pen = false; continue; }
+      if (pen) ctx.lineTo(x, g.SH[k * 2 + 1]); else { ctx.moveTo(x, g.SH[k * 2 + 1]); pen = true; }
     }
+    ctx.stroke();
   }
+  if (p.t === 'station') stationBase(ctx, c, p, T);
   // supports
   if (g.sup.length || g.loopSup) {
-    ctx.strokeStyle = T.sup;
     for (const s of g.sup) {
+      if (s[4] < k0 || s[4] > k1) continue;
       const x = isoX(s[0], s[1]), y0 = isoY(s[0], s[1], s[2]), y1 = isoY(s[0], s[1], s[3]);
+      ctx.strokeStyle = T.sup;
       if (c.ctype === 'wood') {
         ctx.lineWidth = 1.6;
         ctx.beginPath();
         ctx.moveTo(x - 5, y0 + 2); ctx.lineTo(x - 5, y1); ctx.moveTo(x + 5, y0 + 2); ctx.lineTo(x + 5, y1);
-        for (let yy = y1 - 2, f = 0; yy > y0 + 12; yy -= 14, f ^= 1) {
+        for (let yy = y1 - 2; yy > y0 + 12; yy -= 14) {
           ctx.moveTo(x - 5, yy); ctx.lineTo(x + 5, yy - 12);
           ctx.moveTo(x + 5, yy); ctx.lineTo(x - 5, yy - 12);
         }
         ctx.stroke();
       } else {
-        ctx.lineWidth = c.ctype === 'steel' ? 3.4 : 2.4;
+        const lw = c.ctype === 'mini' ? 2.4 : 3.4;
+        ctx.fillStyle = 'rgba(70,80,100,0.5)';
+        ctx.beginPath(); ctx.ellipse(x, y1, lw + 2, (lw + 2) / 2, 0, 0, 6.3); ctx.fill();
+        ctx.lineWidth = lw;
         ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.stroke();
-        ctx.strokeStyle = 'rgba(0,0,0,0.12)'; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(x + 1.4, y0); ctx.lineTo(x + 1.4, y1); ctx.stroke();
-        ctx.strokeStyle = T.sup;
+        ctx.strokeStyle = 'rgba(0,0,0,0.13)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x + lw / 2 - 0.4, y0); ctx.lineTo(x + lw / 2 - 0.4, y1); ctx.stroke();
       }
     }
     if (g.loopSup) {
-      ctx.lineWidth = 3;
+      ctx.strokeStyle = T.sup; ctx.lineWidth = 3;
       for (const s of g.loopSup) {
         const x = isoX(s[0], s[1]), y0 = isoY(s[0], s[1], s[2]);
         const bx = isoX(s[0] + (-DY[p.d]) * 0.35, s[1] + DX[p.d] * 0.35), by = isoY(s[0] - DY[p.d] * 0.35, s[1] + DX[p.d] * 0.35, s[3]);
@@ -207,147 +290,317 @@ export function drawPiece(ctx, c, pi, alpha) {
     }
   }
   // spine for steel
-  if (c.ctype === 'steel') {
+  if (c.ctype === 'steel' || c.ctype === 'launch') {
     ctx.strokeStyle = T.tie; ctx.lineWidth = 3.2;
-    ctx.beginPath(); ctx.moveTo(g.C[0], g.C[1] + 2);
-    for (let k = 2; k < g.C.length; k += 2) ctx.lineTo(g.C[k], g.C[k + 1] + 2);
+    ctx.beginPath(); ctx.moveTo(g.C[k0 * 2], g.C[k0 * 2 + 1] + 2);
+    for (let k = k0 + 1; k <= k1; k++) ctx.lineTo(g.C[k * 2], g.C[k * 2 + 1] + 2);
     ctx.stroke();
   }
   // ties
   ctx.strokeStyle = T.tie; ctx.lineWidth = c.ctype === 'wood' ? 2.2 : 1.6;
   ctx.beginPath();
-  for (const k of g.ties) { ctx.moveTo(g.L[k * 2], g.L[k * 2 + 1]); ctx.lineTo(g.R[k * 2], g.R[k * 2 + 1]); }
+  for (const k of g.ties) { if (k < k0 || k > k1) continue; ctx.moveTo(g.L[k * 2], g.L[k * 2 + 1]); ctx.lineTo(g.R[k * 2], g.R[k * 2 + 1]); }
   ctx.stroke();
   // special markings
   if (p.chain) {
     ctx.strokeStyle = '#4a4f5e'; ctx.lineWidth = 1.6; ctx.setLineDash([3, 3]);
-    strokeLine(ctx, g.C); ctx.setLineDash([]);
+    strokeRange(ctx, g.C, k0, k1); ctx.setLineDash([]);
   } else if (p.t === 'boost' || p.t === 'brake') {
     ctx.strokeStyle = p.t === 'boost' ? '#06d6a0' : '#ff3b3b'; ctx.lineWidth = 4;
-    strokeLine(ctx, g.C);
+    strokeRange(ctx, g.C, k0, k1);
   }
-  // rails
-  ctx.strokeStyle = 'rgba(30,20,50,0.35)'; ctx.lineWidth = 3.6;
-  strokeLine(ctx, g.L); strokeLine(ctx, g.R);
-  ctx.strokeStyle = T.rail; ctx.lineWidth = 2.2;
-  strokeLine(ctx, g.L); strokeLine(ctx, g.R);
+  // rails: a dark outline, the colour, and a thin highlight
+  ctx.strokeStyle = 'rgba(30,20,50,0.38)'; ctx.lineWidth = 3.8;
+  strokeRange(ctx, g.L, k0, k1); strokeRange(ctx, g.R, k0, k1);
+  ctx.strokeStyle = T.rail; ctx.lineWidth = 2.3;
+  strokeRange(ctx, g.L, k0, k1); strokeRange(ctx, g.R, k0, k1);
+  if (fine) {
+    ctx.save(); ctx.translate(-0.5, -0.7);
+    ctx.strokeStyle = T.railHi; ctx.lineWidth = 0.8;
+    strokeRange(ctx, g.L, k0, k1); strokeRange(ctx, g.R, k0, k1);
+    ctx.restore();
+  }
   if (alpha !== undefined) ctx.globalAlpha = 1;
+}
+
+// A station tile: a raised platform beside the track with a yellow safety line.
+function stationBase(ctx, c, p, T) {
+  const z = p.h0, zt = z + 0.22;
+  const sx = isoX(p.x, p.y), sy = isoY(p.x, p.y, zt);
+  ctx.fillStyle = '#b9bfcc';
+  ctx.beginPath(); ctx.moveTo(sx - HW, sy + HH); ctx.lineTo(sx, sy + HH * 2); ctx.lineTo(sx, sy + HH * 2 + 4); ctx.lineTo(sx - HW, sy + HH + 4); ctx.fill();
+  ctx.fillStyle = '#9da5b5';
+  ctx.beginPath(); ctx.moveTo(sx + HW, sy + HH); ctx.lineTo(sx, sy + HH * 2); ctx.lineTo(sx, sy + HH * 2 + 4); ctx.lineTo(sx + HW, sy + HH + 4); ctx.fill();
+  rectPath(ctx, p.x, p.y, 1, 1, zt);
+  ctx.fillStyle = '#e9ecf2'; ctx.fill();
+  // the trough the train runs in
+  const nx = -DY[p.d], ny = DX[p.d], fx = DX[p.d], fy = DY[p.d], cx = p.x + 0.5, cy = p.y + 0.5;
+  const Q = (a, b) => [isoX(cx + fx * a + nx * b, cy + fy * a + ny * b), isoY(cx + fx * a + nx * b, cy + fy * a + ny * b, zt)];
+  const q = [Q(-0.5, -0.24), Q(0.5, -0.24), Q(0.5, 0.24), Q(-0.5, 0.24)];
+  ctx.fillStyle = '#c3c9d6';
+  ctx.beginPath(); ctx.moveTo(q[0][0], q[0][1]); for (let k = 1; k < 4; k++) ctx.lineTo(q[k][0], q[k][1]); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = 2;
+  for (const sgn of [-1, 1]) {
+    const a = Q(-0.5, 0.31 * sgn), b = Q(0.5, 0.31 * sgn);
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+  }
+}
+// The canopy over a station tile, drawn after the train so it sits above it.
+function stationRoof(ctx, c, p) {
+  const T = styleOf(c), z0 = p.h0 + 0.22, z1 = p.h0 + 2.5;
+  const post = (x, y) => {
+    const px = isoX(x, y), a = isoY(x, y, z0), b = isoY(x, y, z1);
+    ctx.strokeStyle = '#f4f6fa'; ctx.lineWidth = 2.4;
+    ctx.beginPath(); ctx.moveTo(px, a); ctx.lineTo(px, b); ctx.stroke();
+  };
+  const nx = Math.abs(DY[p.d]), ny = Math.abs(DX[p.d]); // across the track
+  const cx = p.x + 0.5, cy = p.y + 0.5;
+  post(cx - nx * 0.44, cy - ny * 0.44);
+  post(cx + nx * 0.44, cy + ny * 0.44);
+  const ax = Math.abs(DX[p.d]), ay = Math.abs(DY[p.d]);
+  const P = (a, b, z) => [isoX(cx + ax * a + nx * b, cy + ay * a + ny * b), isoY(cx + ax * a + nx * b, cy + ay * a + ny * b, z)];
+  const quad = (pts, col) => {
+    ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k][0], pts[k][1]);
+    ctx.closePath(); ctx.fillStyle = col; ctx.fill();
+  };
+  ctx.globalAlpha = 0.93;
+  // two sloping halves with stripes running across the track
+  for (let k = 0; k < 4; k++) {
+    const a0 = -0.5 + k * 0.25, a1 = a0 + 0.25, col = k % 2 ? '#fff6e6' : T.car;
+    quad([P(a0, -0.56, z1), P(a1, -0.56, z1), P(a1, 0, z1 + 0.42), P(a0, 0, z1 + 0.42)], shade(col, -0.1));
+    quad([P(a0, 0, z1 + 0.42), P(a1, 0, z1 + 0.42), P(a1, 0.56, z1), P(a0, 0.56, z1)], col);
+  }
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = 'rgba(40,28,64,0.35)'; ctx.lineWidth = 1;
+  const r0 = P(-0.5, 0, z1 + 0.42), r1 = P(0.5, 0, z1 + 0.42);
+  ctx.beginPath(); ctx.moveTo(r0[0], r0[1]); ctx.lineTo(r1[0], r1[1]); ctx.stroke();
 }
 
 // ---------- trains ----------
 const tp = {};
 function drawCar(ctx, c, car) {
-  const T = COASTERS[c.ctype];
-  // metric frame
+  const T = styleOf(c);
+  // metric frame: f = forward, s = sideways, u = up out of the seats
   let fx = car.tx * 4, fy = car.ty * 4, fz = car.tz * 2;
   const fl = Math.hypot(fx, fy, fz) || 1;
   fx /= fl; fy /= fl; fz /= fl;
-  const sx0 = car.sx, sy0 = car.sy; // side vector (horizontal)
-  const ux = fy * 0 - fz * sy0, uy = fz * sx0 - fx * 0, uz = fx * sy0 - fy * sx0;
+  const sx0 = car.sx, sy0 = car.sy, sz0 = car.sz || 0;
+  const ux = fy * sz0 - fz * sy0, uy = fz * sx0 - fx * sz0, uz = fx * sy0 - fy * sx0;
   const P = (a, b, u) => {
     const mx = car.x * 4 + fx * a + sx0 * b + ux * u, my = car.y * 4 + fy * a + sy0 * b + uy * u;
-    const mz = car.z * 2 + 0.7 + fz * a + uz * u;
+    const mz = car.z * 2 + 0.7 + fz * a + sz0 * b + uz * u;
     return [isoX(mx / 4, my / 4), isoY(mx / 4, my / 4, mz / 2)];
   };
-  const hl = 1.05, hw = 0.62, ht = 0.95;
+  const hl = 1.08, hw = 0.64, ht = 0.9;
   const b = [P(-hl, -hw, 0), P(hl, -hw, 0), P(hl, hw, 0), P(-hl, hw, 0)];
-  const t = [P(-hl, -hw, ht), P(hl, -hw, ht), P(hl, hw, ht), P(-hl, hw, ht)];
+  const t = [P(-hl, -hw, ht), P(hl * (car.first ? 0.72 : 1), -hw, ht), P(hl * (car.first ? 0.72 : 1), hw, ht), P(-hl, hw, ht)];
   const quad = (q, col) => {
     ctx.beginPath(); ctx.moveTo(q[0][0], q[0][1]);
-    for (let k = 1; k < 4; k++) ctx.lineTo(q[k][0], q[k][1]);
+    for (let k = 1; k < q.length; k++) ctx.lineTo(q[k][0], q[k][1]);
     ctx.closePath(); ctx.fillStyle = col; ctx.fill();
   };
   quad(b, 'rgba(30,20,50,0.55)');
-  for (let k = 0; k < 4; k++) quad([b[k], b[(k + 1) % 4], t[(k + 1) % 4], t[k]], shade(T.car, -0.22));
+  for (let k = 0; k < 4; k++) quad([b[k], b[(k + 1) % 4], t[(k + 1) % 4], t[k]], k === 3 || k === 0 ? T.carDark : shade(T.car, -0.1));
   quad(t, T.car);
   ctx.strokeStyle = 'rgba(30,20,50,0.45)'; ctx.lineWidth = 0.8; ctx.stroke();
+  // seat well and a bright stripe
+  quad([P(-hl * 0.72, -hw * 0.7, ht), P(hl * 0.3, -hw * 0.7, ht), P(hl * 0.3, hw * 0.7, ht), P(-hl * 0.72, hw * 0.7, ht)], 'rgba(30,20,50,0.35)');
+  quad([P(hl * 0.36, -hw, ht), P(hl * 0.52, -hw, ht), P(hl * 0.52, hw, ht), P(hl * 0.36, hw, ht)], T.carHi);
   if (car.riders > 0) {
+    const up = car.fun > 0.25;
     for (let k = 0; k < Math.min(2, car.riders); k++) {
-      const h = P(0, k ? 0.3 : -0.3, ht + 0.45);
-      ctx.beginPath(); ctx.arc(h[0], h[1], 2.6, 0, 6.3);
+      const side = k ? 0.3 : -0.3, h = P(-0.15, side, ht + 0.5), sh = P(-0.15, side, ht + 0.05);
+      if (up) {
+        const wav = Math.sin(car.time * 14 + k * 2 + car.j) * 0.12;
+        const a1 = P(-0.15 + wav, side - 0.22, ht + 1.05), a2 = P(-0.15 - wav, side + 0.22, ht + 1.05);
+        ctx.strokeStyle = k ? '#f1c27d' : '#ffd9b3'; ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.moveTo(sh[0], sh[1]); ctx.lineTo(a1[0], a1[1]); ctx.moveTo(sh[0], sh[1]); ctx.lineTo(a2[0], a2[1]); ctx.stroke();
+      }
+      ctx.beginPath(); ctx.arc(h[0], h[1], 2.7, 0, 6.3);
       ctx.fillStyle = k ? '#f1c27d' : '#ffd9b3'; ctx.fill();
+      ctx.beginPath(); ctx.arc(h[0], h[1] - 0.6, 2.7, Math.PI, 0);
+      ctx.fillStyle = HAIR[(car.j + k) % HAIR.length]; ctx.fill();
     }
   }
 }
-export function shade(hex, amt) {
-  const n = parseInt(hex.slice(1), 16);
-  let r = n >> 16, g = (n >> 8) & 255, b = n & 255;
-  const f = (v) => Math.max(0, Math.min(255, Math.round(amt < 0 ? v * (1 + amt) : v + (255 - v) * amt)));
-  r = f(r); g = f(g); b = f(b);
-  return '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
-}
+const HAIR = ['#3b2a1a', '#6b4423', '#d9a441', '#1b1b1b', '#b5451b'];
 
 // ---------- guests ----------
-function drawGuest(ctx, g, sx, sy, sel) {
-  const step = g.st === 'walk' ? Math.sin(g.walk) : 0;
+const HATS = ['#ef476f', '#ffd23f', '#06d6a0', '#3b8ed0', '#9b5de5'];
+function drawGuest(ctx, g, sx, sy, sel, time, rain) {
+  const walking = g.st === 'walk';
+  const step = walking ? Math.sin(g.walk) : 0;
+  const k = g.id % 7 === 0 ? 0.82 : 1; // some guests are children
   ctx.fillStyle = 'rgba(0,0,0,0.18)';
-  ctx.beginPath(); ctx.ellipse(sx, sy, 4.2, 2.1, 0, 0, 6.3); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(sx, sy, 4.4 * k, 2.2 * k, 0, 0, 6.3); ctx.fill();
   if (sel) {
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.ellipse(sx, sy, 8, 4, 0, 0, 6.3); ctx.stroke();
   }
+  if (!fine) {
+    // far away a guest is just a shirt and a head
+    ctx.fillStyle = g.shirt; ctx.fillRect(sx - 3 * k, sy - 11 * k, 6 * k, 10 * k);
+    ctx.fillStyle = g.skin; ctx.beginPath(); ctx.arc(sx, sy - 13.8 * k, 3.1 * k, 0, 6.3); ctx.fill();
+    return;
+  }
+  const cheer = g.emT > 1.6 && (g.em === 'star' || g.em === 'smile');
+  const hop = cheer ? Math.abs(Math.sin((g.emT - 1.6) * 8)) * 3 : 0;
+  const bob = Math.abs(step) * 0.8 + hop;
+  const by = sy - bob;
   // legs
-  ctx.strokeStyle = '#3d405b'; ctx.lineWidth = 1.8; ctx.lineCap = 'round';
+  ctx.strokeStyle = '#3d405b'; ctx.lineWidth = 1.9 * k; ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.moveTo(sx - 1.3, sy - 4); ctx.lineTo(sx - 1.3 - step * 1.4, sy - 0.5);
-  ctx.moveTo(sx + 1.3, sy - 4); ctx.lineTo(sx + 1.3 + step * 1.4, sy - 0.5);
+  ctx.moveTo(sx - 1.4 * k, by - 4.5 * k); ctx.lineTo(sx - 1.4 * k - step * 1.5, sy - 0.5 - hop);
+  ctx.moveTo(sx + 1.4 * k, by - 4.5 * k); ctx.lineTo(sx + 1.4 * k + step * 1.5, sy - 0.5 - hop);
   ctx.stroke();
-  const bob = Math.abs(step) * 0.8;
+  // arms
+  ctx.strokeStyle = g.skin; ctx.lineWidth = 1.5 * k;
+  ctx.beginPath();
+  if (cheer) {
+    ctx.moveTo(sx - 3 * k, by - 9.5 * k); ctx.lineTo(sx - 5 * k, by - 14 * k);
+    ctx.moveTo(sx + 3 * k, by - 9.5 * k); ctx.lineTo(sx + 5 * k, by - 14 * k);
+  } else {
+    ctx.moveTo(sx - 3.1 * k, by - 9.6 * k); ctx.lineTo(sx - 3.6 * k + step * 1.2, by - 5.4 * k);
+    ctx.moveTo(sx + 3.1 * k, by - 9.6 * k); ctx.lineTo(sx + 3.6 * k - step * 1.2, by - 5.4 * k);
+  }
+  ctx.stroke();
   // body
   ctx.fillStyle = g.shirt;
-  ctx.beginPath(); ctx.roundRect(sx - 2.9, sy - 10.5 - bob, 5.8, 7, 2); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(sx - 3 * k, by - 11 * k, 6 * k, 7.4 * k, 2.2 * k); ctx.fill();
   ctx.strokeStyle = 'rgba(30,20,50,0.4)'; ctx.lineWidth = 0.7; ctx.stroke();
   // head
-  ctx.fillStyle = g.skin;
-  ctx.beginPath(); ctx.arc(sx, sy - 13 - bob, 2.9, 0, 6.3); ctx.fill();
+  const hy = by - 13.8 * k;
+  ctx.fillStyle = g.nausea > 70 ? '#9fcf6a' : g.skin;
+  ctx.beginPath(); ctx.arc(sx, hy, 3.1 * k, 0, 6.3); ctx.fill();
   ctx.fillStyle = g.hair;
-  ctx.beginPath(); ctx.arc(sx, sy - 13.6 - bob, 2.9, Math.PI, 0); ctx.fill();
+  ctx.beginPath(); ctx.arc(sx, hy - 0.6 * k, 3.1 * k, Math.PI, 0); ctx.fill();
+  if (g.hat) {
+    ctx.fillStyle = HATS[g.hat - 1];
+    ctx.beginPath(); ctx.arc(sx, hy - 1.2 * k, 3.3 * k, Math.PI, 0); ctx.fill();
+    ctx.fillRect(sx - 1 * k, hy - 1.9 * k, 5.6 * k, 1.3 * k);
+  }
   if (g.gift) {
     const cols = ['#ef476f', '#ffd23f', '#06d6a0', '#3b8ed0', '#9b5de5'];
-    const bx = sx + 5 + Math.sin(g.walk * 0.3) * 1.2, by = sy - 26 - bob;
+    const bx = sx + 5 + Math.sin(g.walk * 0.3 + time) * 1.2, byy = sy - 27 - bob;
     ctx.strokeStyle = 'rgba(60,60,60,0.6)'; ctx.lineWidth = 0.6;
-    ctx.beginPath(); ctx.moveTo(sx + 3, sy - 8 - bob); ctx.lineTo(bx, by + 4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(sx + 3, by - 8); ctx.lineTo(bx, byy + 4); ctx.stroke();
     ctx.fillStyle = cols[g.gift - 1];
-    ctx.beginPath(); ctx.ellipse(bx, by, 3.4, 4.2, 0, 0, 6.3); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(bx, byy, 3.5, 4.3, 0, 0, 6.3); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.beginPath(); ctx.ellipse(bx - 1.1, byy - 1.4, 1, 1.4, 0, 0, 6.3); ctx.fill();
+  } else if (rain && g.id % 3) {
+    const uy = hy - 6.5 * k;
+    ctx.strokeStyle = '#5b4636'; ctx.lineWidth = 0.9;
+    ctx.beginPath(); ctx.moveTo(sx + 2.5, by - 7 * k); ctx.lineTo(sx + 2.5, uy); ctx.stroke();
+    ctx.fillStyle = HATS[g.id % 5];
+    ctx.beginPath(); ctx.ellipse(sx + 2.5, uy, 7.5, 3.4, 0, Math.PI, 0); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.beginPath(); ctx.ellipse(sx + 2.5, uy, 2.6, 3.4, 0, Math.PI, 0); ctx.fill();
   }
-  if (g.nausea > 70) {
-    ctx.fillStyle = '#7bc043';
-    ctx.beginPath(); ctx.arc(sx, sy - 13 - bob, 2.9, 0, 6.3); ctx.fill();
+}
+// The little bubble over a guest who just thought something.
+function drawEmote(ctx, kind, x, y, a) {
+  ctx.globalAlpha = a;
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = 'rgba(40,28,64,0.35)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(x, y, 7.2, 0, 6.3); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x - 2, y + 6.4); ctx.lineTo(x, y + 10); ctx.lineTo(x + 2.4, y + 6.2); ctx.fill();
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const face = (col, mouth) => {
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, 5, 0, 6.3); ctx.fill();
+    ctx.fillStyle = '#2b2d42';
+    ctx.beginPath(); ctx.arc(x - 1.8, y - 1.2, 0.8, 0, 6.3); ctx.arc(x + 1.8, y - 1.2, 0.8, 0, 6.3); ctx.fill();
+    ctx.strokeStyle = '#2b2d42'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    if (mouth > 0) ctx.arc(x, y + 0.6, 2.4, 0.15 * Math.PI, 0.85 * Math.PI);
+    else if (mouth < 0) ctx.arc(x, y + 3.6, 2.2, 1.2 * Math.PI, 1.8 * Math.PI);
+    else { ctx.moveTo(x - 2, y + 2.2); ctx.lineTo(x + 2, y + 2.2); }
+    ctx.stroke();
+  };
+  if (kind === 'smile') face('#ffd23f', 1);
+  else if (kind === 'sick') face('#9fcf6a', -1);
+  else if (kind === 'angry') face('#ef6a6a', -1);
+  else if (kind === 'bored') face('#cfd6e3', 0);
+  else if (kind === 'heart') {
+    ctx.fillStyle = '#ef476f';
+    ctx.beginPath(); ctx.moveTo(x, y + 4); ctx.bezierCurveTo(x - 7, y - 1, x - 3, y - 6, x, y - 2); ctx.bezierCurveTo(x + 3, y - 6, x + 7, y - 1, x, y + 4); ctx.fill();
+  } else if (kind === 'star') {
+    ctx.fillStyle = '#ffb703';
+    ctx.beginPath();
+    for (let k = 0; k < 10; k++) { const r = k % 2 ? 2.2 : 5, an = -Math.PI / 2 + (k * Math.PI) / 5; ctx.lineTo(x + Math.cos(an) * r, y + Math.sin(an) * r); }
+    ctx.closePath(); ctx.fill();
+  } else {
+    const txt = kind === 'money' ? '$' : kind === 'zzz' ? 'z' : kind === 'clock' ? '…' : '!';
+    ctx.fillStyle = kind === 'money' ? '#d63a5f' : kind === 'zzz' ? '#3b8ed0' : '#f78c1f';
+    ctx.font = `900 10px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(txt, x, y + 0.5);
   }
+  ctx.globalAlpha = 1;
 }
 
 // ---------- the frame ----------
 let buckets = new Map();
+let fine = true; // zoomed in far enough for small details to be worth drawing
 const gp = {};
-let skyGrad = null, skyH = 0;
-const clouds = Array.from({ length: 7 }, (_, i) => ({ x: (i * 0.17 + 0.05) % 1, y: 0.05 + ((i * 37) % 40) / 100, s: 0.7 + ((i * 53) % 60) / 100 }));
+let farGrad = null, farKey = '';
+const lights = [], emotes = [];
+let glowWarm = null, glowCool = null;
+const queueSpot = new Map();
+let queuePv = -1;
 
 function addBucket(i, item) {
   let b = buckets.get(i);
   if (!b) { b = []; buckets.set(i, b); }
   b.push(item);
 }
+function glowSprite(rgb) {
+  if (typeof document === 'undefined') return null;
+  const c = document.createElement('canvas');
+  c.width = c.height = 96;
+  const g = c.getContext('2d'), gr = g.createRadialGradient(48, 48, 0, 48, 48, 48);
+  gr.addColorStop(0, `rgba(${rgb},0.85)`); gr.addColorStop(0.35, `rgba(${rgb},0.34)`); gr.addColorStop(1, `rgba(${rgb},0)`);
+  g.fillStyle = gr; g.fillRect(0, 0, 96, 96);
+  return c;
+}
+
+// The land or sea around the park, with little strokes that stay put as the camera moves.
+function drawBackdrop(ctx, TH, w, h, z, time) {
+  const key = S.theme + '|' + h;
+  if (!farGrad || farKey !== key) {
+    farGrad = ctx.createLinearGradient(0, 0, 0, h);
+    farGrad.addColorStop(0, TH.far[0]); farGrad.addColorStop(1, TH.far[1]);
+    farKey = key;
+  }
+  ctx.fillStyle = farGrad; ctx.fillRect(0, 0, w, h);
+  const step = 110 * Math.max(1, Math.ceil(0.55 / z));
+  const x0 = Math.floor((cam.x - w / 2 / z) / step) - 1, x1 = Math.ceil((cam.x + w / 2 / z) / step);
+  const y0 = Math.floor((cam.y - h / 2 / z) / (step / 2)) - 1, y1 = Math.ceil((cam.y + h / 2 / z) / (step / 2));
+  ctx.strokeStyle = TH.mark; ctx.lineWidth = Math.max(1.4, 2 * z); ctx.lineCap = 'round';
+  ctx.beginPath();
+  for (let gy = y0; gy <= y1; gy++) for (let gx = x0; gx <= x1; gx++) {
+    const hs = hash(gx, gy);
+    if (hs > 0.62) continue;
+    const wx = (gx + hash(gy, gx)) * step, wy = (gy + hs) * (step / 2);
+    const px = (wx - cam.x) * z + w / 2, py = (wy - cam.y) * z + h / 2;
+    const len = (10 + hs * 26) * z * (TH.sea ? 0.6 + 0.4 * Math.sin(time * 0.9 + hs * 40) : 1);
+    if (TH.sea) { ctx.moveTo(px - len, py); ctx.lineTo(px + len, py); }
+    else { ctx.moveTo(px - len, py + 2 * z); ctx.quadraticCurveTo(px, py - 3 * z, px + len, py + 2 * z); }
+  }
+  ctx.stroke();
+}
 
 export function render(ctx, time, ui) {
-  const { w, h, dpr } = view, z = cam.zoom;
+  const { w, h, dpr } = view, z = cam.zoom, TH = themeOf(S.theme);
+  const dark = look.night ? darkness() : 0;
+  if (SP.setNight) SP.setNight(dark);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  if (!skyGrad || skyH !== h) {
-    skyGrad = ctx.createLinearGradient(0, 0, 0, h);
-    skyGrad.addColorStop(0, '#8fd3ff'); skyGrad.addColorStop(0.6, '#c9ecff'); skyGrad.addColorStop(1, '#e8f8ff');
-    skyH = h;
-  }
-  ctx.fillStyle = skyGrad; ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = 'rgba(255,255,255,0.75)';
-  for (const c of clouds) {
-    const cx = ((c.x + time * 0.004 * c.s) % 1.2 - 0.1) * w, cy = c.y * h, s = c.s * Math.min(w, 900) * 0.07;
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, s * 1.6, s * 0.55, 0, 0, 6.3); ctx.ellipse(cx - s * 0.7, cy + s * 0.1, s * 0.9, s * 0.4, 0, 0, 6.3);
-    ctx.ellipse(cx + s * 0.6, cy - s * 0.25, s * 0.8, s * 0.5, 0, 0, 6.3);
-    ctx.fill();
-  }
+  drawBackdrop(ctx, TH, w, h, z, time);
   ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (w / 2 - cam.x * z), dpr * (h / 2 - cam.y * z));
   const wx0 = cam.x - w / 2 / z - 48, wx1 = cam.x + w / 2 / z + 48;
   const wy0 = cam.y - h / 2 / z - 48, wy1 = cam.y + h / 2 / z;
+  const detail = z >= 0.6, rain = fxWet() > 0.5;
+  fine = detail;
+  lights.length = 0; emotes.length = 0;
 
   // dynamic things go into per-tile buckets so they sort with the scenery
   buckets.clear();
@@ -357,27 +610,48 @@ export function render(ctx, time, ui) {
     const tx = Math.max(0, Math.min(N - 1, Math.floor(gp.x))), ty = Math.max(0, Math.min(N - 1, Math.floor(gp.y)));
     addBucket(idx(tx, ty), { g, x: gp.x, y: gp.y, z: gp.z, d: gp.x + gp.y });
   }
+  if (queuePv !== S.pv) { queueSpot.clear(); queuePv = S.pv; }
   for (const id in S.objs) {
     const c = S.objs[id];
+    // people waiting stand in a little crowd on the path by the entrance of the ride
+    if (c.kind !== 'stall' && c.queue.length && S.gmap) {
+      let spot = queueSpot.get(c.id);
+      if (spot === undefined) { const a = accessTiles(c); spot = a.length ? a[0] : -1; queueSpot.set(c.id, spot); }
+      if (spot >= 0) {
+        const qx = spot % N, qy = (spot / N) | 0, qz = S.h[spot];
+        for (let k = 0; k < Math.min(12, c.queue.length); k++) {
+          const g = S.gmap.get(c.queue[k]);
+          if (!g) continue;
+          const x = qx + 0.2 + (k % 4) * 0.2, y = qy + 0.25 + ((k / 4) | 0) * 0.25;
+          addBucket(spot, { g, x, y, z: qz, d: x + y });
+        }
+      }
+    }
     if (c.kind !== 'coaster' || !c.sim || c.sim.L < 13) continue;
     const moving = c.st === 'run' || c.st === 'test';
-    const head = STATION_HEAD + (moving ? distAtTime(c.sim, c.runT) : 0);
+    const head = moving ? trainDist(c.sim, c.runT) : STATION_HEAD;
     const T = COASTERS[c.ctype];
-    let riders = c.st === 'run' ? c.riders.length : 0;
+    let riders = c.st === 'run' ? c.riders.length : c.st === 'test' ? 0 : 0;
     for (let j = 0; j < T.cars; j++) {
       let dist = head - j * CAR_LEN;
       if (!c.closed) dist = Math.max(0.1, Math.min(c.sim.L - 0.1, dist));
       if (!posAt(c.sim, dist, tp)) continue;
-      const p = c.pieces[c.sim.PI[tp.k % c.sim.n]];
-      let sx, sy;
+      const p = c.pieces[tp.pi];
+      let sx, sy, sz = 0;
       if (p.t === 'loop') { sx = -DY[p.d]; sy = DX[p.d]; }
+      else if (p.t === 'cork') { const th = corkAngle(tp.u); sx = -DY[p.d] * Math.cos(th); sy = DX[p.d] * Math.cos(th); sz = Math.sin(th); }
       else { const l = Math.hypot(tp.tx, tp.ty) || 1; sx = -tp.ty / l; sy = tp.tx / l; }
-      const car = { car: 1, c, x: tp.x, y: tp.y, z: tp.z, tx: tp.tx, ty: tp.ty, tz: tp.tz, sx, sy, d: tp.x + tp.y + 0.01, riders: Math.min(2, riders) };
+      const v = c.sim.v[Math.min(c.sim.segs, tp.k)] || 0;
+      const car = {
+        car: 1, c, x: tp.x, y: tp.y, z: tp.z, tx: tp.tx, ty: tp.ty, tz: tp.tz, sx, sy, sz, d: tp.x + tp.y + 0.01,
+        riders: Math.min(2, riders), first: j === 0, j, time, fun: moving && v > 9 && p.t !== 'station' && !p.chain ? 1 : 0,
+      };
       riders -= 2;
       const tx = Math.max(0, Math.min(N - 1, Math.floor(tp.x))), ty = Math.max(0, Math.min(N - 1, Math.floor(tp.y)));
       addBucket(idx(tx, ty), car);
+      if (j === 0 && moving && dark > 0.05) lights.push(isoX(tp.x, tp.y), isoY(tp.x, tp.y, tp.z + 0.6), 34, 1);
     }
-    if (ui.follow === c.id && moving && posAt(c.sim, head, tp)) {
+    if (ui.follow === c.id && posAt(c.sim, head, tp)) {
       ui.followPos = [isoX(tp.x, tp.y), isoY(tp.x, tp.y, tp.z), tp.k];
     }
   }
@@ -389,9 +663,14 @@ export function render(ctx, time, ui) {
       const y = d - x, i = idx(x, y);
       const he = heff(i), sx = isoX(x, y), sy = isoY(x, y, he);
       const hasTrack = S.trk.has(i);
-      if (sx < wx0 - HW || sx > wx1 + HW || sy < wy0 - 40 || sy > wy1 + (hasTrack ? 420 : S.occ[i] ? 220 : 120)) continue;
-      drawTile(ctx, x, y, i, he, sx, sy, time);
-      if (S.scn[i]) drawScenery(ctx, S.scn[i], sx, sy + HH, time, hash(x, y));
+      if (sx < wx0 - HW || sx > wx1 + HW || sy < wy0 - 40 || sy > wy1 + (hasTrack ? 460 : S.occ[i] ? 240 : 120)) continue;
+      drawTile(ctx, TH, x, y, i, he, sx, sy, time, detail);
+      const sc = S.scn[i];
+      if (sc) {
+        drawScenery(ctx, sc, sx, sy + HH, time, hash(x, y));
+        if (dark > 0.05 && (sc === SCN.lamp || sc === SCN.torch)) lights.push(sx, sy + HH - 30, sc === SCN.lamp ? 78 : 58 + Math.sin(time * 9 + x) * 5, 0);
+      }
+      let roofs = null;
       if (hasTrack) {
         const list = S.trk.get(i);
         for (const s of list) {
@@ -399,21 +678,36 @@ export function render(ctx, time, ui) {
           if (!c) continue;
           const p = c.pieces[s.p];
           if (!p) continue;
+          const alpha = ui.editing && ui.editing !== c.id ? 0.85 : undefined;
           if (p.t === 'loop') {
             const front = p.d === 0 || p.d === 1;
             const isSecond = !(p.x === x && p.y === y);
             if (front !== isSecond) continue;
-          }
-          drawPiece(ctx, c, s.p, ui.editing && ui.editing !== c.id ? 0.85 : undefined);
+            drawPiece(ctx, c, s.p, alpha);
+          } else drawPiece(ctx, c, s.p, alpha, i);
           if (c.sim && c.sim.stall === s.p) hot(ctx, p);
+          if (p.t === 'station') {
+            (roofs || (roofs = [])).push(c, p);
+            if (dark > 0.05) lights.push(sx, sy - 12, 62, 0);
+          }
         }
       }
       const oid = S.occ[i];
       if (oid) {
         const o = S.objs[oid];
         if (o && x === o.x + o.w - 1 && y === o.y + o.h - 1) {
-          setOrigin(isoX(o.x + o.w / 2, o.y + o.h / 2), isoY(o.x + o.w / 2, o.y + o.h / 2, o.z));
+          const ox = isoX(o.x + o.w / 2, o.y + o.h / 2), oy = isoY(o.x + o.w / 2, o.y + o.h / 2, o.z);
+          // a new building pops up with a little bounce
+          const age = o.pop ? time - o.pop : 9;
+          const squash = age < 0.45 ? 1 + Math.sin((age / 0.45) * Math.PI) * 0.16 * (1 - age / 0.45) - (age < 0.12 ? (0.12 - age) * 2.5 : 0) : 1;
+          if (squash !== 1) { ctx.save(); ctx.translate(ox, oy); ctx.scale(2 - squash, squash); ctx.translate(-ox, -oy); }
+          setOrigin(ox, oy);
           if (o.kind === 'ride') drawRide(ctx, o, time); else drawStall(ctx, o, time);
+          if (squash !== 1) ctx.restore();
+          if (dark > 0.05 && o.open) {
+            if (o.kind === 'ride') lights.push(ox, oy - (RIDE_TOP[o.type] || 3) * 6, 56 + 20 * (o.w + o.h), 0);
+            else lights.push(ox, oy - 14, 48, 0);
+          }
         }
       }
       const b = buckets.get(i);
@@ -421,13 +715,51 @@ export function render(ctx, time, ui) {
         if (b.length > 1) b.sort((p, q) => p.d - q.d);
         for (const e of b) {
           if (e.car) drawCar(ctx, e.c, e);
-          else drawGuest(ctx, e.g, isoX(e.x, e.y), isoY(e.x, e.y, e.z), sel && sel.kind === 'guest' && sel.id === e.g.id);
+          else {
+            const gx = isoX(e.x, e.y), gy = isoY(e.x, e.y, e.z);
+            drawGuest(ctx, e.g, gx, gy, sel && sel.kind === 'guest' && sel.id === e.g.id, time, rain);
+            if (e.g.emT > 0 && detail) emotes.push(e.g.em, gx, gy - 27, Math.min(1, e.g.emT * 2));
+          }
         }
       }
-      if (x === S.ent.x && y === S.ent.y) drawEntrance(ctx, x, y, he);
+      if (roofs) for (let k = 0; k < roofs.length; k += 2) stationRoof(ctx, roofs[k], roofs[k + 1]);
+      if (x === S.ent.x && y === S.ent.y) {
+        drawEntrance(ctx, x, y, he, time);
+        if (dark > 0.05) lights.push(sx, sy - 10, 90, 0);
+      }
     }
   }
+  for (let k = 0; k < emotes.length; k += 4) drawEmote(ctx, emotes[k], emotes[k + 1], emotes[k + 2], emotes[k + 3]);
+  cloudShadows(ctx, time);
+  drawFxWorld(ctx, z);
+
+  // weather gloom and night: shade the whole picture, then let the lights shine through
+  const wk = S.wx ? S.wx.kind : 'sun';
+  const gloom = Math.max(fxWet(), fxSnow() * 0.35, wk === 'cloud' ? 0.4 : 0) * 0.22;
+  if (dark > 0.01 || gloom > 0.01) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const r = Math.round((255 - 165 * dark) * (1 - gloom)), g = Math.round((255 - 146 * dark) * (1 - gloom)), b = Math.round((255 - 78 * dark) * (1 - gloom * 0.7));
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = `rgb(${r},${g},${b})`; ctx.fillRect(0, 0, w, h);
+    ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (w / 2 - cam.x * z), dpr * (h / 2 - cam.y * z));
+    if (dark > 0.05 && lights.length) {
+      if (!glowWarm) { glowWarm = glowSprite('255,205,120'); glowCool = glowSprite('220,235,255'); }
+      if (glowWarm) {
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = Math.min(1, dark * 0.36);
+        for (let k = 0; k < lights.length; k += 4) {
+          const rr = lights[k + 2];
+          ctx.drawImage(lights[k + 3] ? glowCool : glowWarm, lights[k] - rr, lights[k + 1] - rr * 0.7, rr * 2, rr * 1.4);
+        }
+        ctx.globalAlpha = 1;
+      }
+    }
+    ctx.globalCompositeOperation = 'source-over';
+  }
+  drawFxGlow(ctx);
   drawOverlays(ctx, time, ui);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  drawFxScreen(ctx, w, h);
 }
 
 function hot(ctx, p) {
@@ -435,42 +767,97 @@ function hot(ctx, p) {
   ctx.fillStyle = 'rgba(255,40,40,0.45)';
   ctx.beginPath(); ctx.arc(isoX(p.x + 0.5, p.y + 0.5), isoY(p.x + 0.5, p.y + 0.5, z), 13, 0, 6.3); ctx.fill();
 }
+// Soft shadows of clouds drifting over the park.
+let cloudSprite = null;
+function cloudShadows(ctx, time) {
+  if (!cloudSprite) {
+    if (typeof document === 'undefined') return;
+    cloudSprite = document.createElement('canvas');
+    cloudSprite.width = cloudSprite.height = 128;
+    const g = cloudSprite.getContext('2d'), gr = g.createRadialGradient(64, 64, 8, 64, 64, 64);
+    gr.addColorStop(0, 'rgba(20,40,70,0.13)'); gr.addColorStop(0.6, 'rgba(20,40,70,0.08)'); gr.addColorStop(1, 'rgba(20,40,70,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+  }
+  const span = N * HW * 2.6;
+  ctx.globalAlpha = S.theme === 'desert' || S.theme === 'snow' ? 0.4 : 0.75;
+  for (let k = 0; k < 5; k++) {
+    const sp = 9 + k * 2.3, rw = 340 + k * 40;
+    const x = ((k * 0.23 * span + time * sp) % span) - span / 2, y = N * HH * (0.1 + ((k * 0.37) % 1) * 1.7);
+    ctx.drawImage(cloudSprite, x - rw, y - rw * 0.42, rw * 2, rw * 0.84);
+    ctx.drawImage(cloudSprite, x + rw * 0.5, y - rw * 0.2, rw * 1.3, rw * 0.55);
+  }
+  ctx.globalAlpha = 1;
+}
 
-function drawTile(ctx, x, y, i, he, sx, sy, time) {
+function drawTile(ctx, TH, x, y, i, he, sx, sy, time, detail) {
   const water = S.water[i], path = S.path[i];
   // side faces
-  const hl = y + 1 < N ? heff(i + N) : -1.6, hr = x + 1 < N ? heff(i + 1) : -1.6;
+  const edgeL = y + 1 >= N, edgeR = x + 1 >= N;
+  const hl = edgeL ? SEA : heff(i + N), hr = edgeR ? SEA : heff(i + 1);
   if (he > hl) {
     const dh = (he - hl) * ZH;
     ctx.beginPath();
     ctx.moveTo(sx - HW, sy + HH); ctx.lineTo(sx, sy + HH * 2); ctx.lineTo(sx, sy + HH * 2 + dh); ctx.lineTo(sx - HW, sy + HH + dh);
     ctx.closePath();
-    ctx.fillStyle = '#c99b5f'; ctx.fill();
-    if (path && y + 1 < N && S.path[i + N] && he - hl <= 1.1) stairs(ctx, sx - HW, sy + HH, sx, sy + HH * 2, dh, '#d9c08e');
+    ctx.fillStyle = TH.sideL; ctx.fill();
+    if (dh > 20 && detail) {
+      ctx.fillStyle = 'rgba(60,30,20,0.09)';
+      ctx.beginPath(); ctx.moveTo(sx - HW, sy + HH + dh * 0.5); ctx.lineTo(sx, sy + HH * 2 + dh * 0.5); ctx.lineTo(sx, sy + HH * 2 + dh); ctx.lineTo(sx - HW, sy + HH + dh); ctx.fill();
+    }
+    if (path && !edgeL && S.path[i + N] && he - hl <= 1.1) stairs(ctx, sx - HW, sy + HH, sx, sy + HH * 2, dh, TH.stairL);
+    else if (!water && detail) { ctx.fillStyle = TH.lip; ctx.beginPath(); ctx.moveTo(sx - HW, sy + HH); ctx.lineTo(sx, sy + HH * 2); ctx.lineTo(sx, sy + HH * 2 + 2.5); ctx.lineTo(sx - HW, sy + HH + 2.5); ctx.fill(); }
+    if (edgeL && TH.sea) { ctx.strokeStyle = TH.foam; ctx.lineWidth = 2.2; ctx.beginPath(); ctx.moveTo(sx - HW, sy + HH + dh); ctx.lineTo(sx, sy + HH * 2 + dh); ctx.stroke(); }
   }
   if (he > hr) {
     const dh = (he - hr) * ZH;
     ctx.beginPath();
     ctx.moveTo(sx, sy + HH * 2); ctx.lineTo(sx + HW, sy + HH); ctx.lineTo(sx + HW, sy + HH + dh); ctx.lineTo(sx, sy + HH * 2 + dh);
     ctx.closePath();
-    ctx.fillStyle = '#a87c48'; ctx.fill();
-    if (path && x + 1 < N && S.path[i + 1] && he - hr <= 1.1) stairs(ctx, sx, sy + HH * 2, sx + HW, sy + HH, dh, '#c2a877');
+    ctx.fillStyle = TH.sideR; ctx.fill();
+    if (dh > 20 && detail) {
+      ctx.fillStyle = 'rgba(60,30,20,0.09)';
+      ctx.beginPath(); ctx.moveTo(sx, sy + HH * 2 + dh * 0.5); ctx.lineTo(sx + HW, sy + HH + dh * 0.5); ctx.lineTo(sx + HW, sy + HH + dh); ctx.lineTo(sx, sy + HH * 2 + dh); ctx.fill();
+    }
+    if (path && !edgeR && S.path[i + 1] && he - hr <= 1.1) stairs(ctx, sx, sy + HH * 2, sx + HW, sy + HH, dh, TH.stairR);
+    else if (!water && detail) { ctx.fillStyle = TH.lipR; ctx.beginPath(); ctx.moveTo(sx, sy + HH * 2); ctx.lineTo(sx + HW, sy + HH); ctx.lineTo(sx + HW, sy + HH + 2.5); ctx.lineTo(sx, sy + HH * 2 + 2.5); ctx.fill(); }
+    if (edgeR && TH.sea) { ctx.strokeStyle = TH.foam; ctx.lineWidth = 2.2; ctx.beginPath(); ctx.moveTo(sx, sy + HH * 2 + dh); ctx.lineTo(sx + HW, sy + HH + dh); ctx.stroke(); }
   }
   // top
   ctx.beginPath();
   ctx.moveTo(sx, sy); ctx.lineTo(sx + HW, sy + HH); ctx.lineTo(sx, sy + HH * 2); ctx.lineTo(sx - HW, sy + HH);
   ctx.closePath();
+  const wB = y > 0 && S.water[i - N], wA = x > 0 && S.water[i - 1], wC = !edgeR && S.water[i + 1], wD = !edgeL && S.water[i + N];
   if (water) {
-    ctx.fillStyle = '#4fb8ee'; ctx.fill();
-    const ph = (time * 0.6 + hash(x, y) * 6) % 3;
+    ctx.fillStyle = wA && wB && wC && wD ? TH.deep : TH.water; ctx.fill();
+    // foam where the water meets the bank behind it
+    if ((!wA || !wB) && detail) {
+      ctx.strokeStyle = TH.foam; ctx.lineWidth = 2; ctx.lineCap = 'round';
+      const o = 1.5 + Math.sin(time * 1.6 + x + y) * 0.9;
+      ctx.beginPath();
+      if (!wB) { ctx.moveTo(sx + 2, sy + 2 + o); ctx.lineTo(sx + HW - 4, sy + HH - 1 + o); }
+      if (!wA) { ctx.moveTo(sx - 2, sy + 2 + o); ctx.lineTo(sx - HW + 4, sy + HH - 1 + o); }
+      ctx.stroke();
+    }
+    const ph = detail ? (time * 0.6 + hash(x, y) * 6) % 3 : 9;
     if (ph < 1.6) {
       ctx.strokeStyle = `rgba(255,255,255,${0.55 * Math.sin((ph / 1.6) * Math.PI)})`; ctx.lineWidth = 1.4; ctx.lineCap = 'round';
       const ox = (hash(y, x) - 0.5) * 24, oy = HH + (hash(x + 9, y) - 0.5) * 10;
       ctx.beginPath(); ctx.moveTo(sx + ox - 6, sy + oy); ctx.lineTo(sx + ox + 6, sy + oy); ctx.stroke();
     }
-  } else if (path) {
-    ctx.fillStyle = (x + y) & 1 ? '#f3e2ba' : '#efdcb0'; ctx.fill();
-    ctx.strokeStyle = '#c9ad78'; ctx.lineWidth = 1.6; ctx.lineCap = 'round';
+    return;
+  }
+  const hs = hash(x, y);
+  if (path) {
+    ctx.fillStyle = (x + y) & 1 ? TH.path : TH.pathB; ctx.fill();
+    if (detail) {
+      // paving joints
+      ctx.strokeStyle = 'rgba(90,60,30,0.1)'; ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(sx - HW / 2, sy + HH / 2); ctx.lineTo(sx + HW / 2, sy + HH * 1.5);
+      ctx.moveTo(sx + HW / 2, sy + HH / 2); ctx.lineTo(sx - HW / 2, sy + HH * 1.5);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = TH.pathEdge; ctx.lineWidth = 1.8; ctx.lineCap = 'round';
     ctx.beginPath();
     const P = (xx, yy) => S.path[idx(xx, yy)] || S.occ[idx(xx, yy)];
     if (!(y > 0 && P(x, y - 1))) { ctx.moveTo(sx + 1, sy + 1); ctx.lineTo(sx + HW - 1, sy + HH); }
@@ -478,14 +865,35 @@ function drawTile(ctx, x, y, i, he, sx, sy, time) {
     if (!(x + 1 < N && P(x + 1, y))) { ctx.moveTo(sx + HW - 1, sy + HH); ctx.lineTo(sx, sy + HH * 2 - 1); }
     if (!(y + 1 < N ? P(x, y + 1) : (x === S.ent.x))) { ctx.moveTo(sx - HW + 1, sy + HH); ctx.lineTo(sx, sy + HH * 2 - 1); }
     ctx.stroke();
+  } else if (wA || wB || wC || wD) {
+    ctx.fillStyle = (x + y) & 1 ? TH.shore : TH.shoreB; ctx.fill();
   } else {
-    const lift = Math.min(4, S.h[i] - 2);
-    ctx.fillStyle = (x + y) & 1 ? GRASS_A[lift + 2] : GRASS_B[lift + 2];
+    const lift = Math.max(0, Math.min(6, S.h[i]));
+    ctx.fillStyle = TH.pal[lift][((x + y) & 1) + (hs > 0.72 ? 2 : 0)];
     ctx.fill();
+    if (detail && !S.scn[i] && !S.occ[i] && hs < 0.2) {
+      const dx = (hash(y, x) - 0.5) * 30, dy = HH + (hash(x + 5, y + 3) - 0.5) * 12;
+      if (hs < 0.13) {
+        // a tuft of grass, a ripple in the sand or a drift of snow
+        ctx.strokeStyle = TH.tuft; ctx.lineWidth = 1.4; ctx.lineCap = 'round';
+        ctx.beginPath();
+        if (S.theme === 'desert' || S.theme === 'snow') { ctx.moveTo(sx + dx - 7, sy + dy); ctx.quadraticCurveTo(sx + dx, sy + dy - 3, sx + dx + 7, sy + dy); }
+        else { ctx.moveTo(sx + dx - 3, sy + dy); ctx.lineTo(sx + dx - 4, sy + dy - 4); ctx.moveTo(sx + dx, sy + dy); ctx.lineTo(sx + dx, sy + dy - 5); ctx.moveTo(sx + dx + 3, sy + dy); ctx.lineTo(sx + dx + 4.5, sy + dy - 4); }
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = TH.dots[(hs * 300) % 3 | 0];
+        ctx.beginPath(); ctx.arc(sx + dx, sy + dy, 1.5, 0, 6.3); ctx.arc(sx + dx + 5, sy + dy + 2.5, 1.3, 0, 6.3); ctx.arc(sx + dx - 4, sy + dy + 3, 1.2, 0, 6.3); ctx.fill();
+      }
+    }
+  }
+  // a soft shadow at the foot of higher ground behind this tile
+  const tA = x > 0 && S.h[i - 1] > S.h[i] && !S.water[i - 1], tB = y > 0 && S.h[i - N] > S.h[i] && !S.water[i - N];
+  if ((tA || tB) && detail) {
+    ctx.fillStyle = 'rgba(20,40,30,0.12)';
+    if (tA) { ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx - HW, sy + HH); ctx.lineTo(sx - HW + 8, sy + HH + 4); ctx.lineTo(sx + 8, sy + 4); ctx.fill(); }
+    if (tB) { ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx + HW, sy + HH); ctx.lineTo(sx + HW - 8, sy + HH + 4); ctx.lineTo(sx - 8, sy + 4); ctx.fill(); }
   }
 }
-const GRASS_A = ['#7cc653', '#84cd59', '#8cd45f', '#95da69', '#9fe075', '#a9e582', '#b3ea8f'];
-const GRASS_B = ['#75bf4d', '#7dc653', '#85cd59', '#8ed463', '#98da6f', '#a2df7c', '#ace489'];
 
 function stairs(ctx, x0, y0, x1, y1, dh, col) {
   ctx.beginPath();
@@ -498,27 +906,38 @@ function stairs(ctx, x0, y0, x1, y1, dh, col) {
   ctx.stroke();
 }
 
-function drawEntrance(ctx, x, y, he) {
+function drawEntrance(ctx, x, y, he, time) {
   // an arch across the entrance path, at the front edge of the map
   const lx = isoX(x, y + 1), ly = isoY(x, y + 1, he), rx = isoX(x + 1, y + 1), ry = isoY(x + 1, y + 1, he);
-  const H = 46;
-  for (const [px, py] of [[lx, ly], [rx, ry]]) {
+  const H = 48;
+  for (const [px, py, k] of [[lx, ly, 0], [rx, ry, 1]]) {
+    ctx.fillStyle = 'rgba(0,0,0,0.16)';
+    ctx.beginPath(); ctx.ellipse(px, py + 1, 8, 4, 0, 0, 6.3); ctx.fill();
     ctx.fillStyle = '#ef476f';
-    ctx.beginPath(); ctx.roundRect(px - 4.5, py - H, 9, H + 2, 2); ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.85)';
-    for (let k = 0; k < 4; k++) ctx.fillRect(px - 4.5, py - H + 6 + k * 11, 9, 4);
+    ctx.beginPath(); ctx.roundRect(px - 5, py - H, 10, H + 2, 2.5); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.88)';
+    for (let j = 0; j < 4; j++) ctx.fillRect(px - 5, py - H + 6 + j * 11, 10, 4.5);
+    ctx.fillStyle = 'rgba(0,0,0,0.12)'; ctx.fillRect(px + 2, py - H, 3, H + 2);
     ctx.fillStyle = '#ffd23f';
-    ctx.beginPath(); ctx.arc(px, py - H - 3, 5, 0, 6.3); ctx.fill();
+    ctx.beginPath(); ctx.arc(px, py - H - 3, 5.5, 0, 6.3); ctx.fill();
+    // a pennant on each post
+    const wv = Math.sin(time * 4 + k * 2) * 2;
+    ctx.strokeStyle = '#5b4636'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(px, py - H - 7); ctx.lineTo(px, py - H - 22); ctx.stroke();
+    ctx.fillStyle = k ? '#06d6a0' : '#3b8ed0';
+    ctx.beginPath(); ctx.moveTo(px, py - H - 22); ctx.lineTo(px + 12, py - H - 18 + wv); ctx.lineTo(px, py - H - 14); ctx.fill();
   }
   ctx.fillStyle = '#3b8ed0';
   ctx.beginPath();
-  ctx.moveTo(lx - 2, ly - H + 2); ctx.lineTo(rx + 2, ry - H + 2); ctx.lineTo(rx + 2, ry - H + 17); ctx.lineTo(lx - 2, ly - H + 17);
+  ctx.moveTo(lx - 2, ly - H + 2); ctx.lineTo(rx + 2, ry - H + 2); ctx.lineTo(rx + 2, ry - H + 18); ctx.lineTo(lx - 2, ly - H + 18);
   ctx.closePath(); ctx.fill();
   ctx.strokeStyle = 'rgba(30,20,50,0.35)'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.22)';
+  ctx.beginPath(); ctx.moveTo(lx - 2, ly - H + 2); ctx.lineTo(rx + 2, ry - H + 2); ctx.lineTo(rx + 2, ry - H + 6); ctx.lineTo(lx - 2, ly - H + 6); ctx.fill();
   ctx.save();
-  ctx.translate((lx + rx) / 2, (ly + ry) / 2 - H + 9.5);
+  ctx.translate((lx + rx) / 2, (ly + ry) / 2 - H + 10.5);
   ctx.transform(1, (ry - ly) / (rx - lx), 0, 1, 0, 0);
-  ctx.fillStyle = '#fff'; ctx.font = '900 9px ui-rounded, "Segoe UI", system-ui, sans-serif';
+  ctx.fillStyle = '#fff'; ctx.font = `900 9px ${FONT}`;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('COASTR', 0, 0.5);
   ctx.restore();
@@ -530,24 +949,67 @@ function outline(ctx, x, y, w, h, z, fill, stroke) {
   if (fill) { ctx.fillStyle = fill; ctx.fill(); }
   if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 2; ctx.stroke(); }
 }
+function pill(ctx, text, x, y, col, s) {
+  ctx.font = `800 ${12 * s}px ${FONT}`;
+  const tw = Math.max(18 * s, ctx.measureText(text).width + 12 * s);
+  ctx.fillStyle = col;
+  ctx.beginPath(); ctx.roundRect(x - tw / 2, y - 9 * s, tw, 18 * s, 9 * s); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, y + 0.5 * s);
+}
+// A round button floating on the map, with an arrow pointing along (ax, ay) on screen.
+function handle(ctx, x, y, r, col, ink, ax, ay, s, kind) {
+  ctx.fillStyle = 'rgba(20,20,40,0.25)';
+  ctx.beginPath(); ctx.arc(x, y + 2.5 * s, r, 0, 6.3); ctx.fill();
+  ctx.fillStyle = col;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, 6.3); ctx.fill();
+  ctx.strokeStyle = 'rgba(30,20,50,0.55)'; ctx.lineWidth = 1.6 * s; ctx.stroke();
+  ctx.save();
+  ctx.translate(x, y); ctx.scale(s, s); ctx.rotate(Math.atan2(ay, ax));
+  ctx.strokeStyle = ink; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  if (kind === 2) { ctx.moveTo(-5, -6); ctx.lineTo(1, 0); ctx.lineTo(-5, 6); ctx.moveTo(1, -6); ctx.lineTo(7, 0); ctx.lineTo(1, 6); }
+  else if (kind === 1) { ctx.moveTo(-2, -6); ctx.lineTo(4, 0); ctx.lineTo(-2, 6); }
+  else { ctx.moveTo(-8, 0); ctx.lineTo(7, 0); ctx.moveTo(1, -6); ctx.lineTo(7, 0); ctx.lineTo(1, 6); }
+  ctx.stroke();
+  ctx.restore();
+}
 
 function drawOverlays(ctx, time, ui) {
-  const pulse = 0.6 + 0.4 * Math.sin(time * 5);
+  const pulse = 0.6 + 0.4 * Math.sin(time * 5), s = 1 / cam.zoom;
   // selected object
   if (ui.sel && ui.sel.kind === 'obj') {
     const o = S.objs[ui.sel.id];
     if (o && o.kind !== 'coaster') outline(ctx, o.x, o.y, o.w, o.h, o.z + 0.05, null, `rgba(255,255,255,${0.5 + 0.4 * pulse})`);
-    else if (o) for (const p of o.pieces) if (p.t === 'station') outline(ctx, p.x, p.y, 1, 1, p.h0 + 0.15, null, `rgba(255,255,255,${0.5 + 0.4 * pulse})`);
+    else if (o) for (const p of o.pieces) if (p.t === 'station') outline(ctx, p.x, p.y, 1, 1, p.h0 + 0.25, null, `rgba(255,255,255,${0.5 + 0.4 * pulse})`);
+  }
+  // rough spots on the coaster being built or looked at
+  const rc = S.objs[ui.editing] || (ui.sel && ui.sel.kind === 'obj' && S.objs[ui.sel.id]);
+  if (rc && rc.kind === 'coaster' && rc.closed && rc.sim && rc.sim.ok && rc.I > 8) {
+    const sm = rc.sim, lim = Math.max(1.1, sm.maxGl * 0.7);
+    ctx.fillStyle = `rgba(255,45,45,${0.35 + 0.3 * pulse})`;
+    for (let k = 2; k < sm.segs; k += 2) {
+      if (sm.gl[k] > lim || sm.gv[k] > 4.4) { const q = k % sm.n; ctx.beginPath(); ctx.arc(isoX(sm.X[q], sm.Y[q]), isoY(sm.X[q], sm.Y[q], sm.Z[q] + 0.3), 6, 0, 6.3); ctx.fill(); }
+    }
   }
   // ghost for the active tool
   const g = ui.ghost;
   if (g) {
-    const ok = g.ok, fill = ok ? 'rgba(80,230,140,0.4)' : 'rgba(255,70,70,0.45)', stroke = ok ? '#eafff2' : '#ffe1e1';
+    const FILL = ['rgba(255,70,70,0.45)', 'rgba(80,230,140,0.4)'], STROKE = ['#ffe1e1', '#eafff2'];
+    const ok = g.ok ? 1 : 0;
     if (g.kind === 'tiles') {
-      for (const [x, y] of g.tiles) if (inB(x, y)) outline(ctx, x, y, 1, 1, heff(idx(x, y)) + 0.03, fill, stroke);
+      for (const tl of g.tiles) {
+        if (!inB(tl[0], tl[1])) continue;
+        const k = tl[2] === undefined ? ok : tl[2] ? 1 : 0;
+        outline(ctx, tl[0], tl[1], 1, 1, heff(idx(tl[0], tl[1])) + 0.03, FILL[k], STROKE[k]);
+      }
+      if (g.label && g.tiles.length) {
+        const tl = g.tiles[g.tiles.length - 1];
+        if (inB(tl[0], tl[1])) pill(ctx, g.label, isoX(tl[0] + 0.5, tl[1] + 0.5), isoY(tl[0] + 0.5, tl[1] + 0.5, heff(idx(tl[0], tl[1]))) - 22 * s, g.poor ? '#d63a5f' : '#2b2d42', s);
+      }
     } else if (g.kind === 'box') {
       const z = inB(g.x, g.y) ? S.h[idx(g.x, g.y)] : 2;
-      outline(ctx, g.x, g.y, g.w, g.h, z + 0.03, fill, stroke);
+      outline(ctx, g.x, g.y, g.w, g.h, z + 0.03, FILL[ok], STROKE[ok]);
       if (g.draw && ok) {
         ctx.globalAlpha = 0.7;
         setOrigin(isoX(g.x + g.w / 2, g.y + g.h / 2), isoY(g.x + g.w / 2, g.y + g.h / 2, z));
@@ -557,11 +1019,19 @@ function drawOverlays(ctx, time, ui) {
     } else if (g.kind === 'station') {
       for (let k = 0; k < 3; k++) {
         const x = g.x + DX[g.d] * k, y = g.y + DY[g.d] * k;
-        if (inB(x, y)) outline(ctx, x, y, 1, 1, S.h[idx(x, y)] + 0.03, fill, stroke);
+        if (inB(x, y)) outline(ctx, x, y, 1, 1, S.h[idx(x, y)] + 0.03, FILL[ok], STROKE[ok]);
       }
       const ax = g.x + 0.5 + DX[g.d] * 2.2, ay = g.y + 0.5 + DY[g.d] * 2.2;
       if (inB(g.x, g.y)) arrow(ctx, ax, ay, S.h[idx(g.x, g.y)] + 0.4, g.d, '#fff');
     }
+  }
+  // the tile you can drag from to draw a line or an area
+  if (ui.handle && inB(ui.handle.x, ui.handle.y)) {
+    const { x, y } = ui.handle, z = heff(idx(x, y)) + 0.04;
+    outline(ctx, x, y, 1, 1, z, `rgba(255,255,255,${0.12 + 0.14 * pulse})`, `rgba(255,255,255,${0.7 + 0.3 * pulse})`);
+    const cx = isoX(x + 0.5, y + 0.5), cy = isoY(x + 0.5, y + 0.5, z);
+    ctx.fillStyle = '#fff'; ctx.strokeStyle = 'rgba(30,20,50,0.6)'; ctx.lineWidth = 1.5 * s;
+    ctx.beginPath(); ctx.arc(cx, cy, 6 * s, 0, 6.3); ctx.fill(); ctx.stroke();
   }
   // coaster editor: where the next piece goes
   if (ui.editing) {
@@ -579,10 +1049,19 @@ function drawOverlays(ctx, time, ui) {
           ctx.stroke(); ctx.setLineDash([]);
         }
       }
-      arrow(ctx, e.x + 0.5 - DX[e.d] * 0.25, e.y + 0.5 - DY[e.d] * 0.25, e.h + 0.5, e.d, '#ffd23f', 1 + 0.12 * pulse);
       // mark the station entry so it is clear where the track must come back to
       const f = c.pieces[0];
       arrow(ctx, f.x + 0.5 - DX[f.d] * 0.9, f.y + 0.5 - DY[f.d] * 0.9, f.h0 + 0.5, f.d, '#06d6a0', 0.85);
+      // previews of the pieces on offer, each with a button to tap
+      const cs = ui.cands;
+      if (cs) {
+        for (const q of cs) if (q.gc && q.key === ui.hot) drawPiece(ctx, q.gc, 1, q.ok ? 0.8 : 0.3);
+        for (const q of cs) {
+          const hotOne = q.key === ui.hot, r = (hotOne ? 21 : 18) * s;
+          if (q.kind) handle(ctx, q.hx, q.hy, 14 * s, q.on ? '#2b2d42' : '#ffffff', q.on ? '#fff' : '#2b2d42', 0, q.kind === 'up' ? -1 : 1, s, q.two ? 2 : 1);
+          else handle(ctx, q.hx, q.hy, r, !q.ok ? '#c9ced8' : q.stall ? '#ffb703' : '#ffd23f', q.ok ? '#2b2d42' : '#8d93a6', q.ax, q.ay, s, 0);
+        }
+      } else arrow(ctx, e.x + 0.5 - DX[e.d] * 0.25, e.y + 0.5 - DY[e.d] * 0.25, e.h + 0.5, e.d, '#ffd23f', 1 + 0.12 * pulse);
     }
   }
   // badges over rides
@@ -598,13 +1077,7 @@ function drawOverlays(ctx, time, ui) {
       else if (o.noAccess) { text = '!'; col = '#e63946'; }
       else if (o.kind !== 'stall' && o.queue.length) text = String(o.queue.length);
       if (!text) continue;
-      const s = 1 / Math.max(0.8, cam.zoom);
-      ctx.font = `800 ${11 * s}px ui-rounded, "Segoe UI", system-ui, sans-serif`;
-      const tw = Math.max(16 * s, ctx.measureText(text).width + 10 * s);
-      ctx.fillStyle = col;
-      ctx.beginPath(); ctx.roundRect(cx - tw / 2, top - 8 * s, tw, 16 * s, 8 * s); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(text, cx, top + 0.5 * s);
+      pill(ctx, text, cx, top, col, 1 / Math.max(0.8, cam.zoom));
     }
   }
 }
@@ -636,4 +1109,20 @@ export function coasterThumb(ctx, ctype, w, h) {
   for (let x = 0; x < 4; x++) { S.h[idx(x, 0)] = realH[x * 2]; S.water[idx(x, 0)] = realH[x * 2 + 1]; }
   S.h = keep.h || S.h; S.water = keep.water || S.water;
   ctx.restore();
+}
+
+/** A tiny picture of a whole map for the scenario list. m = {h, water, scn, path, theme}. */
+export function mapThumb(ctx, m, w, h) {
+  const TH = themeOf(m.theme), sx = w / (2 * N), sy = (h - 10) / (2 * N);
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, TH.far[0]); g.addColorStop(1, TH.far[1]);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+  for (let d = 0; d <= 2 * N - 2; d++) {
+    for (let x = Math.max(0, d - N + 1); x <= Math.min(N - 1, d); x++) {
+      const y = d - x, i = idx(x, y), z = m.h[i];
+      const px = w / 2 + (x - y) * sx, py = 8 + (x + y) * sy - (z - 2) * 1.6;
+      ctx.fillStyle = m.water[i] ? TH.water : m.path[i] ? TH.path : m.scn[i] ? shade(TH.pal[Math.min(6, z)][0], -0.28) : TH.pal[Math.min(6, z)][(x + y) & 1];
+      ctx.fillRect(px - sx, py, sx * 2 + 0.6, sy * 2 + 0.6 + (z > 2 ? (z - 2) * 1.6 : 0));
+    }
+  }
 }

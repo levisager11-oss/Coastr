@@ -1,25 +1,27 @@
 // Everything the player touches: toolbar, build menus, panels, the coaster builder, and map input.
 import {
-  N, DX, DY, RIDES, STALLS, SCENERY, SCN, COASTERS, RIDE_ORDER, STALL_ORDER, COASTER_ORDER, RESEARCH, RESEARCH_LEVELS,
-  GOALS, MAX_LOAN,
+  N, DX, DY, RIDES, STALLS, SCENERY, SCN, COASTERS, RIDE_ORDER, STALL_ORDER, COASTER_ORDER, SCENERY_ORDER, RESEARCH, RESEARCH_LEVELS,
+  MAX_LOAN, TRACK_COLORS, SCENARIOS,
 } from './data.js';
 import {
   S, idx, inB, events, canPath, placePath, removePath, canPlaceBox, placeRide, placeStall, footprint, canScenery,
   placeScenery, removeScenery, canTerrain, terrain, canWater, setWater, whatAt, removeObj, objValue, accessTiles,
-  parkValue, canAfford, spend, earn,
+  parkValue, canAfford, spend, earn, snapshot, restore,
 } from './world.js';
-import { canStartCoaster, startCoaster, addPiece, undoPiece, autoFinish, endState } from './coaster.js';
+import { canStartCoaster, startCoaster, addPiece, undoPiece, autoFinish, endState, previewPiece } from './coaster.js';
 import { rideWorth, rideStats, rideUsable } from './guests.js';
-import { date, feeWorth, goalProgress, startTest, coasterCap } from './sim.js';
-import { cam, view, pickTile, pickThing, toWorld, isoX, isoY, coasterThumb, objCenter } from './render.js';
+import { date, feeWorth, goalProgress, startTest, coasterCap, goalsOf, researchNext, darkness } from './sim.js';
+import { cam, view, look, pickTile, pickThing, toWorld, isoX, isoY, coasterThumb, objCenter } from './render.js';
 import { drawRide, drawStall, thumbRide, thumbStall, thumbScenery, drawScenery } from './sprites.js';
 import { t, money, num, lang } from './i18n.js';
 import { sfx, unlock, audio } from './audio.js';
 import { icon } from './icons.js';
+import { burst, floatText, confetti, fxHooks } from './fx.js';
 
 export const ui = {
   tool: 'inspect', item: null, rot: 0, ghost: null, sel: null, editing: 0, follow: 0, followPos: null,
-  pending: null, slope: 0, chain: false, bank: false, camTarget: null, touch: false, hooks: {},
+  pending: null, slope: 0, chain: false, bank: false, wide: false, camTarget: null, touch: false, hooks: {},
+  cands: null, hot: null, handle: null, area: null, undo: null,
 };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -143,7 +145,7 @@ function trayItems() {
     case 'ride': return RIDE_ORDER.map((id) => ({ id, kind: 'ride', cost: RIDES[id].cost }));
     case 'stall': return STALL_ORDER.map((id) => ({ id, kind: 'stall', cost: STALLS[id].cost }));
     case 'coaster': return COASTER_ORDER.map((id) => ({ id, kind: 'coaster', cost: COASTERS[id].station }));
-    case 'scenery': return SCENERY.filter(Boolean).map((s) => ({ id: s.id, kind: 'scenery', cost: s.cost }));
+    case 'scenery': return SCENERY_ORDER.map((id) => ({ id, kind: 'scenery', cost: SCENERY[SCN[id]].cost }));
     case 'terrain': return [['raise', 20], ['lower', 20], ['water', 30], ['fill', 30]].map(([id, cost]) => ({ id, kind: 'x', cost, free: true }));
     default: return [];
   }
@@ -174,11 +176,28 @@ function buildTray(force) {
     b.classList.toggle('on', b.dataset.item === ui.item);
     b.classList.toggle('poor', !b.classList.contains('locked') && !canAfford(+b.dataset.cost));
   }
+  updateInfo();
+}
+// One line about the chosen thing, or how to use the chosen tool.
+function updateInfo() {
+  let txt = '';
+  const it = ui.item;
+  if (!ui.editing) {
+    if (ui.tool === 'ride' && it) { const d = RIDES[it]; txt = t('i_stats', num(d.E, 1), num(d.I, 1), num(d.Q, 1), d.cap); }
+    else if (ui.tool === 'coaster' && it) txt = t('d_' + it);
+    else if (ui.tool === 'stall' && it) txt = t('d_' + it);
+    else if (ui.tool === 'scenery' && it) txt = t('i_beauty', SCENERY[SCN[it]].beauty) + ' ' + t(ui.touch ? 'i_line_touch' : 'i_line_mouse');
+    else if (ui.tool === 'path') txt = t(ui.touch ? 'i_line_touch' : 'i_line_mouse');
+    else if (ui.tool === 'terrain') txt = t(ui.touch ? 'i_area_touch' : 'i_area_mouse');
+    else if (ui.tool === 'demolish') txt = t('i_demolish') + ' ' + t(ui.touch ? 'i_area_touch' : 'i_area_mouse');
+  }
+  if (els.info.textContent !== txt) els.info.textContent = txt;
+  els.info.hidden = !txt;
 }
 export function selectTool(tool) {
   if (ui.editing) return;
   ui.tool = ui.tool === tool && tool !== 'inspect' ? 'inspect' : tool;
-  ui.item = null; ui.ghost = null; ui.pending = null; ui.rot = 0;
+  ui.item = null; ui.ghost = null; ui.pending = null; ui.rot = 0; ui.handle = null; ui.area = null;
   const items = trayItems().filter((i) => i.free || S.unlocked[i.id]);
   if (items.length && (ui.tool === 'path' || ui.tool === 'terrain' || ui.tool === 'scenery')) ui.item = items[0].id;
   if (ui.tool !== 'inspect') closePanel();
@@ -189,7 +208,7 @@ function selectItem(id) {
   if (!it) return;
   if (!it.free && !S.unlocked[id]) { toast(t('e_locked'), 'bad'); sfx('error'); return; }
   ui.item = ui.item === id && ui.tool !== 'path' && ui.tool !== 'terrain' ? null : id;
-  ui.ghost = null; ui.pending = null; ui.rot = 0;
+  ui.ghost = null; ui.pending = null; ui.rot = 0; ui.handle = null; ui.area = null;
   buildTray(); showConfirm(); sfx('click');
   if (ui.tool === 'coaster' && ui.item) toast(t('b_station'));
 }
@@ -202,11 +221,112 @@ function boxFor(tile) {
 function stationFor(tile) {
   return { x: tile.x - DX[ui.rot], y: tile.y - DY[ui.rot], d: ui.rot };
 }
+// ---------- tools that work on one tile, a line of tiles or a whole area ----------
+const AREA_TOOLS = { path: 'line', scenery: 'line', terrain: 'rect', demolish: 'rect' };
+const areaTool = () => AREA_TOOLS[ui.tool] && (ui.item || ui.tool === 'demolish');
+/** What the current tool would do on one tile: {ok, cost, why}. */
+function canAt(x, y) {
+  let r, cost = 0;
+  if (ui.tool === 'path') { r = canPath(x, y); cost = 10; }
+  else if (ui.tool === 'scenery') { r = canScenery(SCN[ui.item], x, y); cost = SCENERY[SCN[ui.item]].cost; }
+  else if (ui.tool === 'terrain') {
+    if (ui.item === 'raise' || ui.item === 'lower') { r = canTerrain(x, y, ui.item === 'raise' ? 1 : -1); cost = 20; }
+    else { r = canWater(x, y, ui.item === 'water'); cost = 30; }
+  } else return { ok: !whatAt(x, y), cost: 0 };
+  if (r.ok || r.why === 'e_money') return { ok: true, cost };
+  if (r.why === 'e_same') return { ok: true, cost: 0 };
+  return { ok: false, cost: 0, why: r.why };
+}
+function applyOne(x, y) {
+  if (ui.tool === 'path') return placePath(x, y);
+  if (ui.tool === 'scenery') return placeScenery(SCN[ui.item], x, y);
+  if (ui.tool === 'terrain') return ui.item === 'raise' ? terrain(x, y, 1) : ui.item === 'lower' ? terrain(x, y, -1) : setWater(x, y, ui.item === 'water');
+  const w = whatAt(x, y);
+  if (w && w.kind === 'scenery') return removeScenery(x, y);
+  if (w && w.kind === 'path') return removePath(x, y);
+  return { ok: false, why: 'e_none' };
+}
+/** Tiles from a to b: an L-shaped line for paths and scenery, a filled box for land and removing. */
+function areaTiles(a, b, firstY) {
+  const out = [];
+  if (AREA_TOOLS[ui.tool] === 'line') {
+    const sx = Math.sign(b.x - a.x) || 1, sy = Math.sign(b.y - a.y) || 1;
+    if (firstY) {
+      for (let y = a.y; y !== b.y + sy; y += sy) out.push([a.x, y]);
+      for (let x = a.x + sx; a.x !== b.x && x !== b.x + sx; x += sx) out.push([x, b.y]);
+    } else {
+      for (let x = a.x; x !== b.x + sx; x += sx) out.push([x, a.y]);
+      for (let y = a.y + sy; a.y !== b.y && y !== b.y + sy; y += sy) out.push([b.x, y]);
+    }
+  } else {
+    let x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+    // keep an area to a sensible size, measured from where the drag began
+    if (x1 - x0 > 19) { if (a.x === x0) x1 = x0 + 19; else x0 = x1 - 19; }
+    if (y1 - y0 > 19) { if (a.y === y0) y1 = y0 + 19; else y0 = y1 - 19; }
+    out.push([a.x, a.y]);
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (x !== a.x || y !== a.y) out.push([x, y]);
+  }
+  return out;
+}
+function areaGhost(tiles) {
+  let total = 0;
+  const out = [];
+  for (const [x, y] of tiles) {
+    if (!inB(x, y)) continue;
+    const r = canAt(x, y);
+    total += r.cost;
+    out.push([x, y, r.ok]);
+  }
+  return { kind: 'tiles', tiles: out, ok: true, label: total && out.length > 1 ? money(total) : null, poor: !canAfford(total) };
+}
+function applyArea(tiles, skipFirst) {
+  const list = tiles.filter(([x, y]) => inB(x, y));
+  if (!list.length) return;
+  if (ui.tool === 'demolish' && list.length === 1) {
+    const w = whatAt(list[0][0], list[0][1]);
+    if (w && (w.kind === 'obj' || w.kind === 'coaster')) { askDemolish(w.id); return; }
+  }
+  const snap = snapshot(list.map(([x, y]) => idx(x, y)));
+  let n = 0, bad = null, last = null;
+  for (let k = skipFirst ? 1 : 0; k < list.length; k++) {
+    const r = applyOne(list[k][0], list[k][1]);
+    if (r.ok) { n++; last = list[k]; }
+    else if (r.why === 'e_money') { bad = r; break; }
+    else if (!bad && r.why && r.why !== 'e_same' && r.why !== 'e_none') bad = r;
+  }
+  if (n) {
+    sfx(ui.tool === 'demolish' ? 'remove' : 'path');
+    setUndo(snap);
+    const i = idx(last[0], last[1]);
+    burst(isoX(last[0] + 0.5, last[1] + 0.5), isoY(last[0] + 0.5, last[1] + 0.5, S.h[i]), S.water[i] ? 'splash' : 'dust', 6);
+  }
+  if (bad && (!n || bad.why === 'e_money')) fail(bad);
+  buildTray();
+}
+
+// ---------- undo for the last thing built ----------
+function setUndo(snap) {
+  snap.delta = S.cash - snap.cash;
+  ui.undo = { snap, at: performance.now() };
+  els.undo.hidden = false;
+}
+function clearUndo() { ui.undo = null; if (els.undo) els.undo.hidden = true; }
+function doUndo() {
+  if (!ui.undo) return;
+  restore(ui.undo.snap);
+  clearUndo();
+  ui.handle = null; ui.ghost = null;
+  if (ui.sel && ui.sel.kind === 'obj' && !S.objs[ui.sel.id]) closePanel();
+  sfx('remove'); toast(t('undone'));
+  buildTray();
+}
+
 function ghostAt(tile) {
   if (!tile || ui.editing) return null;
   const { x, y } = tile;
   switch (ui.tool) {
-    case 'path': return { kind: 'tiles', tiles: [[x, y]], ok: canPath(x, y).ok };
+    case 'path': case 'terrain': return areaGhost([[x, y]]);
+    case 'scenery': return ui.item ? areaGhost([[x, y]]) : null;
     case 'ride': {
       if (!ui.item) return null;
       const b = boxFor(tile), type = ui.item, rot = ui.rot;
@@ -223,51 +343,35 @@ function ghostAt(tile) {
       const s = stationFor(tile);
       return { kind: 'station', ...s, ok: canStartCoaster(ui.item, s.x, s.y, s.d).ok };
     }
-    case 'scenery': return ui.item ? { kind: 'tiles', tiles: [[x, y]], ok: canScenery(SCN[ui.item], x, y).ok } : null;
-    case 'terrain': {
-      const r = ui.item === 'raise' ? canTerrain(x, y, 1) : ui.item === 'lower' ? canTerrain(x, y, -1) : canWater(x, y, ui.item === 'water');
-      return { kind: 'tiles', tiles: [[x, y]], ok: r.ok };
-    }
     case 'demolish': {
       const w = whatAt(x, y);
-      if (!w) return { kind: 'tiles', tiles: [[x, y]], ok: true };
-      if (w.kind === 'obj') { const o = S.objs[w.id]; return { kind: 'box', x: o.x, y: o.y, w: o.w, h: o.h, ok: false }; }
-      return { kind: 'tiles', tiles: [[x, y]], ok: false };
+      if (w && w.kind === 'obj') { const o = S.objs[w.id]; return { kind: 'box', x: o.x, y: o.y, w: o.w, h: o.h, ok: false }; }
+      return { kind: 'tiles', tiles: [[x, y, !w]], ok: true };
     }
     default: return null;
   }
 }
 
 // ---------- applying a tool to a tile ----------
-function applyTool(tile, dragging) {
+function applyTool(tile) {
   const { x, y } = tile;
   let r;
+  if (areaTool()) { applyArea([[x, y]]); return; }
   switch (ui.tool) {
-    case 'path':
-      r = placePath(x, y);
-      if (r.ok) sfx('path'); else if (!dragging && r.why !== 'e_same') fail(r);
-      break;
-    case 'scenery':
-      if (!ui.item) return;
-      r = placeScenery(SCN[ui.item], x, y);
-      if (r.ok) sfx('path'); else if (!dragging && r.why !== 'e_same') fail(r);
-      break;
-    case 'terrain':
-      r = ui.item === 'raise' ? terrain(x, y, 1) : ui.item === 'lower' ? terrain(x, y, -1) : setWater(x, y, ui.item === 'water');
-      if (r.ok) sfx('path'); else if (!dragging && r.why !== 'e_same') fail(r);
-      break;
     case 'ride': {
       if (!ui.item) return;
-      const b = boxFor(tile);
+      const b = boxFor(tile), snap = snapshot(boxTiles(b));
       r = placeRide(ui.item, b.x, b.y, ui.rot);
-      if (r.ok) { sfx('place'); flagAccess(r.obj); } else fail(r);
+      if (r.ok) { sfx('place'); flagAccess(r.obj); setUndo(snap); } else fail(r);
       break;
     }
-    case 'stall':
+    case 'stall': {
       if (!ui.item) return;
+      const snap = snapshot([idx(x, y)].filter(() => inB(x, y)));
       r = placeStall(ui.item, x, y);
-      if (r.ok) { sfx('place'); flagAccess(r.obj); } else fail(r);
+      if (r.ok) { sfx('place'); flagAccess(r.obj); setUndo(snap); } else fail(r);
       break;
+    }
     case 'coaster': {
       if (!ui.item) return;
       const s = stationFor(tile);
@@ -275,21 +379,17 @@ function applyTool(tile, dragging) {
       if (r.ok) { sfx('place'); r.obj.capacity = coasterCap(r.obj); enterEditor(r.obj.id); } else fail(r);
       break;
     }
-    case 'demolish': demolishAt(x, y, dragging); break;
   }
   buildTray();
+}
+function boxTiles(b) {
+  const out = [];
+  for (let j = 0; j < b.h; j++) for (let i = 0; i < b.w; i++) if (inB(b.x + i, b.y + j)) out.push(idx(b.x + i, b.y + j));
+  return out;
 }
 function flagAccess(o) {
   o.noAccess = !accessTiles(o).length;
   if (o.noAccess) toast(t('no_access'), 'bad');
-}
-async function demolishAt(x, y, dragging) {
-  const w = whatAt(x, y);
-  if (!w) return;
-  if (w.kind === 'scenery') { removeScenery(x, y); sfx('remove'); return; }
-  if (w.kind === 'path') { const r = removePath(x, y); if (r.ok) sfx('remove'); else if (!dragging) fail(r); return; }
-  if (dragging) return;
-  askDemolish(w.id);
 }
 async function askDemolish(id) {
   const o = S.objs[id];
@@ -322,7 +422,7 @@ function onConfirm(e) {
   const c = b.dataset.c;
   if (c === 'cancel') { ui.pending = null; ui.ghost = null; sfx('click'); }
   else if (c === 'rot') { rotate(); }
-  else { const tile = ui.pending; ui.pending = null; ui.ghost = null; applyTool(tile, false); }
+  else { const tile = ui.pending; ui.pending = null; ui.ghost = null; applyTool(tile); }
   showConfirm();
 }
 export function rotate() {
@@ -335,25 +435,30 @@ export function rotate() {
 }
 
 // ---------- the coaster builder ----------
-const SLOPES = [[-2, 'b_steepdown', 'slope_dd'], [-1, 'b_down', 'slope_d'], [0, 'b_flat', 'slope_f'], [1, 'b_up', 'slope_u'], [2, 'b_steepup', 'slope_uu']];
+const SLOPES = [[-2, 'b_steepdown', 'slope_dd', '1'], [-1, 'b_down', 'slope_d', '2'], [0, 'b_flat', 'slope_f', '3'], [1, 'b_up', 'slope_u', '4'], [2, 'b_steepup', 'slope_uu', '5']];
 export function enterEditor(id) {
   const c = S.objs[id];
   if (!c) return;
-  ui.editing = id; ui.tool = 'inspect'; ui.item = null; ui.ghost = null; ui.pending = null;
-  ui.slope = 0; ui.chain = false; ui.bank = false;
+  ui.editing = id; ui.tool = 'inspect'; ui.item = null; ui.ghost = null; ui.pending = null; ui.handle = null; ui.area = null;
+  ui.slope = 0; ui.chain = false; ui.bank = false; ui.wide = false; ui.follow = 0;
+  clearUndo();
   c.open = false;
   closePanel(); markTool(); showConfirm();
-  els.tools.hidden = true; els.tray.hidden = true; els.builder.hidden = false;
+  els.tools.hidden = true; els.tray.hidden = true; els.info.hidden = true; els.builder.hidden = false;
   buildBuilder();
   focusEnd(c);
 }
 export function exitEditor(silent) {
   const c = S.objs[ui.editing];
-  ui.editing = 0; ui.follow = 0;
+  ui.editing = 0; ui.follow = 0; ui.cands = null; ui.hot = null;
   els.tools.hidden = false; els.builder.hidden = true; els.testhud.hidden = true;
   if (c && !silent) {
     if (c.st === 'test') { c.st = 'idle'; c.runT = 0; }
-    if (c.closed && c.sim.ok) {
+    if (c.pieces.length <= 3) {
+      // nothing but a station: take it away again and give the money back
+      earn(c.cost, 'build'); removeObj(c.id, false);
+      toast(t('b_cancelled'));
+    } else if (c.closed && c.sim.ok) {
       c.open = true; S.pv++;
       c.noAccess = !accessTiles(c).length;
       toast(c.noAccess ? t('no_access') : objName(c) + ': ' + t('open'), c.noAccess ? 'bad' : 'good');
@@ -366,21 +471,61 @@ function buildBuilder() {
   const c = S.objs[ui.editing];
   if (!c) return;
   const T = COASTERS[c.ctype];
-  const btn = (act, label, ic, cls = '', dis = false) =>
-    `<button data-b="${act}" class="${cls}" title="${esc(t(label))}" ${dis ? 'disabled' : ''}>${icon(ic)}<span>${esc(t(label))}</span></button>`;
+  const btn = (act, label, ic, cls = '', key = '') =>
+    `<button data-b="${act}" class="${cls}" title="${esc(t(label))}${key ? ' (' + key + ')' : ''}">${icon(ic)}<span>${esc(t(label))}</span></button>`;
+  const slopes = SLOPES.filter(([v]) => Math.abs(v) < 2 || T.steep).map(([v, l, ic, k]) => btn('slope' + v, l, ic, '', k)).join('');
+  els.builder.classList.toggle('few', !T.steep);
   els.builder.innerHTML = `
     <div class="b-head"><b>${esc(objName(c))}</b><span data-k="info"></span></div>
     <div class="b-status" data-k="status"></div>
     <div class="b-rows">
-      <div class="grp" data-g="slope">${SLOPES.map(([v, l, ic]) => btn('slope' + v, l, ic, '', Math.abs(v) === 2 && !T.steep)).join('')}</div>
-      <div class="grp">${btn('l', 'b_left', 'turn_l', 'big')}${btn('s', 'b_straight', 'straight', 'big')}${btn('r', 'b_right', 'turn_r', 'big')}</div>
-      <div class="grp">${btn('chain', 'b_chain', 'chain')}${T.bank ? btn('bank', 'b_bank', 'bank') : ''}${T.loop ? btn('loop', 'b_loop', 'loop') : ''}${S.unlocked.booster && c.ctype !== 'mini' ? btn('boost', 'b_boost', 'boost') : ''}${btn('brake', 'b_brake', 'brake')}</div>
-      <div class="grp wide">${btn('undo', 'b_undo', 'undo', 'act')}${btn('auto', 'b_auto', 'wand', 'act')}${btn('test', 'b_test', 'play', 'act')}${btn('done', 'b_done', 'check', 'act done')}</div>
+      <div class="grp g-slope">${slopes}</div>
+      <div class="grp g-dir">${btn('l', 'b_left', 'turn_l', 'big', '←')}${btn('s', 'b_straight', 'straight', 'big', '↑')}${btn('r', 'b_right', 'turn_r', 'big', '→')}</div>
+      <div class="grp g-opt">${T.launch ? '' : btn('chain', 'b_chain', 'chain', '', 'C')}${btn('wide', 'b_wide', 'wide', '', 'V')}${T.bank ? btn('bank', 'b_bank', 'bank', '', 'B') : ''}</div>
+      <div class="grp g-spec">${T.loop ? btn('loop', 'b_loop', 'loop', '', 'L') : ''}${T.cork ? btn('cork', 'b_cork', 'cork', '', 'K') : ''}${S.unlocked.booster && c.ctype !== 'mini' ? btn('boost', 'b_boost', 'boost') : ''}${btn('brake', 'b_brake', 'brake')}</div>
+      <div class="grp g-act">${btn('undo', 'b_undo', 'undo', 'act', '↓')}${btn('auto', 'b_auto', 'wand', 'act', 'F')}${btn('test', 'b_test', 'play', 'act', 'T')}${btn('done', 'b_done', 'check', 'act done', 'Enter')}</div>
     </div>`;
   refreshBuilder();
 }
 function ratingLine(c) {
   return `${t('excitement')} ${num(c.E, 1)} · ${t('intensity')} ${num(c.I, 1)} · ${t('nausea')} ${num(c.Q, 1)}`;
+}
+// The ways on from the end of the track: three pieces to choose from, and steeper / less steep.
+function updateCands() {
+  const c = S.objs[ui.editing];
+  if (!c || c.closed || c.st === 'test') { ui.cands = null; return; }
+  const e = endState(c), last = c.pieces[c.pieces.length - 1], T = COASTERS[c.ctype];
+  const px = e.x + 0.5 - DX[e.d] * 0.5, py = e.y + 0.5 - DY[e.d] * 0.5;
+  const bx = isoX(px, py), by = isoY(px, py, e.h + 0.3), out = [];
+  for (const key of ['l', 's', 'r']) {
+    const spec = { t: key === 's' ? 's' : (ui.wide ? 'w' : '') + key, slope: ui.slope, chain: ui.chain, bank: ui.bank };
+    const pv = previewPiece(c, spec);
+    const dir = key === 's' ? e.d : (e.d + (key === 'l' ? 3 : 1)) % 4;
+    let ax = DX[dir] - DY[dir], ay = (DX[dir] + DY[dir]) * 0.5;
+    const l = Math.hypot(ax, ay);
+    ax /= l; ay /= l;
+    out.push({ key, ok: pv.ok, why: pv.why, stall: pv.stall, ax, ay, bx, by, gc: { ctype: c.ctype, col: c.col, closed: false, pieces: [last, pv.p] } });
+  }
+  const max = T.steep ? 2 : 1;
+  // the steeper / flatter buttons sit above and below, so they need some height to fit
+  const roomy = view.h - els.top.offsetHeight - els.bottom.offsetHeight > 215;
+  if (roomy && ui.slope < max) out.push({ key: 'up', kind: 'up', ax: 0, ay: -1, bx, by, on: ui.slope > 0, two: ui.slope >= 1, ok: true });
+  if (roomy && ui.slope > -max) out.push({ key: 'down', kind: 'down', ax: 0, ay: 1, bx, by, on: ui.slope < 0, two: ui.slope <= -1, ok: true });
+  ui.cands = out;
+  layoutHandles();
+}
+// the buttons keep the same distance on screen from the end of the track at any zoom
+function layoutHandles() {
+  if (!ui.cands) return;
+  const d = (ui.touch ? 66 : 58) / cam.zoom;
+  for (const q of ui.cands) { const k = q.kind ? 0.92 : 1; q.hx = q.bx + q.ax * d * k; q.hy = q.by + q.ay * d * k; }
+}
+function handleAt(px, py) {
+  if (!ui.cands) return null;
+  const [wx, wy] = toWorld(px, py);
+  let best = null, bd = (ui.touch ? 30 : 23) / cam.zoom;
+  for (const q of ui.cands) { const d = Math.hypot(q.hx - wx, q.hy - wy); if (d < bd) { bd = d; best = q; } }
+  return best;
 }
 function refreshBuilder() {
   const c = S.objs[ui.editing];
@@ -394,61 +539,76 @@ function refreshBuilder() {
   }
   q('info').textContent = parts.join(' · ');
   const st = q('status');
-  if (!sim.ok) { st.textContent = t('stuck'); st.className = 'b-status bad'; }
-  else if (c.closed) { st.textContent = t('b_complete') + ' ' + ratingLine(c) + (c.I > 9 ? ' — ' + t('too_intense') : ''); st.className = 'b-status ' + (c.I > 9 ? 'bad' : 'good'); }
-  else { st.textContent = ''; st.className = 'b-status'; }
+  let txt = '', cls = 'b-status';
+  if (!sim.ok) { txt = t('stuck'); cls += ' bad'; }
+  else if (c.closed) { txt = t('b_complete') + ' ' + ratingLine(c) + (c.I > 9 ? ' — ' + t('too_intense') : ''); cls += c.I > 9 ? ' bad' : ' good'; }
+  else if (c.pieces.length <= 3) txt = t(COASTERS[c.ctype].launch ? 'b_hint_launch' : 'b_hint');
+  if (st.textContent !== txt) st.textContent = txt;
+  if (st.className !== cls) st.className = cls;
   for (const b of els.builder.querySelectorAll('button[data-b]')) {
     const a = b.dataset.b;
     if (a.startsWith('slope')) b.classList.toggle('on', +a.slice(5) === ui.slope);
     else if (a === 'chain') b.classList.toggle('on', ui.chain);
     else if (a === 'bank') b.classList.toggle('on', ui.bank);
-    if (['l', 's', 'r', 'loop', 'boost', 'brake', 'auto'].includes(a)) b.disabled = c.closed;
+    else if (a === 'wide') b.classList.toggle('on', ui.wide);
+    if (['l', 's', 'r', 'loop', 'cork', 'boost', 'brake', 'auto'].includes(a)) b.disabled = c.closed;
     if (a === 'test') b.disabled = !(c.closed && sim.ok) || c.st !== 'idle';
     if (a === 'undo') b.disabled = c.pieces.length <= 3 || c.st === 'test';
   }
+  updateCands();
 }
 function focusEnd(c) {
   const e = endState(c);
   const wx = isoX(e.x + 0.5, e.y + 0.5), wy = isoY(e.x + 0.5, e.y + 0.5, e.h);
   const bh = els.bottom.offsetHeight, th = els.top.offsetHeight;
-  // keep the end of the track inside the free part of the screen, above the builder
+  // keep the end of the track, and the buttons round it, inside the free part of the screen
   const cy = (th + (view.h - bh)) / 2;
   const sx = (wx - cam.x) * cam.zoom + view.w / 2, sy = (wy - cam.y) * cam.zoom + view.h / 2;
-  const mx = Math.min(140, view.w * 0.25), my = Math.min(90, (view.h - bh - th) * 0.3);
+  const mx = Math.min(150, view.w * 0.3), my = Math.min(110, (view.h - bh - th) * 0.36);
   if (sx < mx || sx > view.w - mx || sy < th + my || sy > view.h - bh - my) {
     ui.camTarget = [wx, wy - (cy - view.h / 2) / cam.zoom];
   }
 }
-function onBuilder(e) {
-  const b = e.target.closest('button[data-b]');
-  if (!b || b.disabled) return;
+/** One action of the builder, from a button, a key or a button on the map. */
+function builderAct(a) {
   const c = S.objs[ui.editing];
   if (!c) return;
-  const a = b.dataset.b;
+  const T = COASTERS[c.ctype], max = T.steep ? 2 : 1;
   let r = null;
-  if (a.startsWith('slope')) { ui.slope = +a.slice(5); sfx('click'); }
-  else if (a === 'chain') { ui.chain = !ui.chain; sfx('click'); }
-  else if (a === 'bank') { ui.bank = !ui.bank; sfx('click'); }
+  if (a.startsWith('slope')) { ui.slope = Math.max(-max, Math.min(max, +a.slice(5))); sfx('click'); }
+  else if (a === 'up' || a === 'down') { ui.slope = Math.max(-max, Math.min(max, ui.slope + (a === 'up' ? 1 : -1))); sfx('click'); }
+  else if (a === 'chain') { if (!T.launch) { ui.chain = !ui.chain; sfx('click'); } }
+  else if (a === 'bank') { if (T.bank) { ui.bank = !ui.bank; sfx('click'); } }
+  else if (a === 'wide') { ui.wide = !ui.wide; sfx('click'); }
   else if (a === 'l' || a === 'r' || a === 's') {
-    let slope = ui.slope;
-    if (a !== 's' && Math.abs(slope) > 1) slope = Math.sign(slope);
-    r = addPiece(c, { t: a, slope, chain: ui.chain, bank: ui.bank });
-  } else if (a === 'loop' || a === 'boost' || a === 'brake') r = addPiece(c, { t: a });
-  else if (a === 'undo') r = undoPiece(c);
-  else if (a === 'auto') r = autoFinish(c);
+    if (c.closed) return;
+    r = addPiece(c, { t: a === 's' ? 's' : (ui.wide ? 'w' : '') + a, slope: ui.slope, chain: ui.chain, bank: ui.bank });
+  } else if (a === 'loop' || a === 'cork' || a === 'boost' || a === 'brake') {
+    if (c.closed || (a === 'loop' && !T.loop) || (a === 'cork' && !T.cork)) return;
+    r = addPiece(c, { t: a });
+  } else if (a === 'undo') { if (c.pieces.length > 3 && c.st !== 'test') r = undoPiece(c); }
+  else if (a === 'auto') { if (!c.closed) r = autoFinish(c); }
   else if (a === 'test') { if (startTest(c)) { ui.follow = c.id; els.testhud.hidden = false; sfx('whoosh'); } }
   else if (a === 'done') { sfx('click'); exitEditor(); return; }
   if (r) {
-    if (r.ok) { sfx(a === 'undo' ? 'remove' : 'track'); focusEnd(c); }
-    else fail(r);
+    if (r.ok) {
+      sfx(a === 'undo' ? 'remove' : 'track'); focusEnd(c);
+      if (a !== 'undo') { const e = endState(c); burst(isoX(e.x + 0.5 - DX[e.d] * 0.5, e.y + 0.5 - DY[e.d] * 0.5), isoY(e.x + 0.5 - DX[e.d] * 0.5, e.y + 0.5 - DY[e.d] * 0.5, e.h + 0.3), 'spark', 5); }
+    } else fail(r);
   }
   refreshBuilder();
+}
+function onBuilder(e) {
+  const b = e.target.closest('button[data-b]');
+  if (!b || b.disabled) return;
+  builderAct(b.dataset.b);
 }
 
 // ---------- panels ----------
 let panel = null; // {type, id, sig}
 export function openPanel(type, id) {
   if (ui.editing && type !== 'settings') return;
+  if (ui.follow && ui.follow !== id) stopFollow();
   panel = { type, id, sig: '' };
   ui.sel = type === 'obj' || type === 'guest' ? { kind: type, id } : null;
   if (els.panel.hidden) shownAt = performance.now();
@@ -457,7 +617,9 @@ export function openPanel(type, id) {
   els.panel.scrollTop = 0;
   refreshPanel();
 }
+function stopFollow() { ui.follow = 0; if (els.testhud) els.testhud.hidden = true; }
 export function closePanel() {
+  if (ui.follow && !ui.editing) stopFollow();
   panel = null; ui.sel = null;
   if (els.panel) { els.panel.hidden = true; els.hud.classList.remove('has-panel'); }
 }
@@ -490,9 +652,14 @@ function panelHTML() {
       h += `<div class="facts">${fact('len', t('length'))}${fact('spd', t('top_speed'))}${fact('drp', t('biggest_drop'))}${fact('tim', t('ride_time'))}${fact('gmax', t('max_g'))}${fact('air', t('airtime'))}</div>`;
     }
     h += `<div class="facts">${isS ? '' : fact('queue', t('queue'))}${fact('cust', t('customers'))}${fact('inc', t('income'))}${isS ? '' : fact('cap', t('capacity'))}</div>`;
+    if (isC) {
+      const T = COASTERS[o.ctype];
+      h += `<h3>${esc(t('colour'))}</h3><div class="swatches">${TRACK_COLORS.map((pal, i) =>
+        `<button data-act="col${i}" aria-label="${i}" style="background:${pal ? pal[0] : T.rail};border-color:${pal ? pal[2] : T.car}"></button>`).join('')}</div>`;
+    }
     h += '<div class="btns">';
     if (isC) h += `<button class="btn yellow" data-act="edit">${esc(t('edit_track'))}</button>`;
-    if (isC && usable) h += `<button class="btn flat" data-act="test">${esc(t('test_ride'))}</button>`;
+    if (isC && usable) h += `<button class="btn flat" data-act="watch" data-k="watch"></button><button class="btn flat" data-act="test">${esc(t('test_ride'))}</button>`;
     h += `<button class="btn flat" data-act="demolish">${esc(t('demolish'))}</button></div></div>`;
     return h;
   }
@@ -517,21 +684,23 @@ function panelHTML() {
   }
   if (p.type === 'research') {
     let h = head(t('research')) + '<div class="p-body">';
-    if (S.research.done >= RESEARCH.length) return h + `<div class="note">${esc(t('r_alldone'))}</div></div>`;
+    if (researchNext() < 0) return h + `<div class="note">${esc(t('r_alldone'))}</div></div>`;
     h += `<h3>${esc(t('r_funding'))}</h3><div class="choice">${RESEARCH_LEVELS.map((v, i) => `<button data-act="rl${i}">${i ? money(v) : esc(t('r_off'))}</button>`).join('')}</div>`;
     h += `<h3>${esc(t('r_current'))}</h3><div class="row"><b data-k="proj"></b><b data-k="pct"></b></div><div class="prog"><i data-w="prog"></i></div>`;
     h += `<h3>${esc(t('r_next'))}</h3><ul class="list" data-k="next"></ul></div>`;
     return h;
   }
   if (p.type === 'goals') {
-    let h = head(t('goals')) + '<div class="p-body">';
+    const goals = goalsOf(), SC = SCENARIOS[S.sc] || SCENARIOS.meadows;
+    let h = head(t('sc_' + S.sc)) + '<div class="p-body">';
+    if (!S.sandbox) h += `<div class="stars big">${starsHTML(S.stars || 0)}</div>`;
     h += `<div class="facts">${fact('guests', t('guests'))}${fact('rating', t('rating'))}${fact('peak', t('p_peak'))}${fact('value', t('f_value'))}</div>`;
     if (S.sandbox) h += `<div class="note">${esc(t('goals_sandbox'))}</div>`;
     else if (S.goalsDone) h += `<div class="note">${esc(t('goals_all'))}</div>`;
-    else h += `<h3>${esc(t('goal_n', S.goal + 1, GOALS.length))}</h3><div class="row" style="align-items:flex-start"><b style="white-space:normal">${esc(goalText(S.goal))}</b></div><div class="prog goal"><i data-w="goal"></i></div><div class="hint" style="margin-top:0">${esc(GOALS[S.goal].reward ? t('goal_reward', money(GOALS[S.goal].reward)) : '')}</div>`;
+    else h += `<h3>${esc(t('goal_n', S.goal + 1, goals.length))}</h3><div class="row" style="align-items:flex-start"><b style="white-space:normal">${esc(goalText(S.goal))}</b></div><div class="prog goal"><i data-w="goal"></i></div><div class="hint" style="margin-top:0">${esc(goals[S.goal].reward ? t('goal_reward', money(goals[S.goal].reward)) : '')}</div>`;
     h += `<h3>${esc(t('p_thoughts'))}</h3><ul class="list" data-k="thoughts"></ul>`;
     if (!S.sandbox) {
-      h += `<h3>${esc(t('goals'))}</h3><ul class="list">${GOALS.map((g, i) => `<li class="${i < S.goal ? 'done' : i === S.goal ? 'now' : ''}"><span class="ck">${i < S.goal ? icon('check') : ''}</span><span>${esc(goalText(i))}</span></li>`).join('')}</ul>`;
+      h += `<h3>${esc(t('goals'))}</h3><ul class="list">${goals.map((g, i) => `<li class="${i < S.goal ? 'done' : i === S.goal ? 'now' : ''}"><span class="ck">${i < S.goal ? icon('check') : ''}</span><span>${esc(goalText(i))}</span>${SC.stars.includes(i + 1) ? `<span class="cnt st${i < S.goal ? ' got' : ''}">${icon('star')}</span>` : ''}</li>`).join('')}</ul>`;
     }
     return h + '</div>';
   }
@@ -539,19 +708,32 @@ function panelHTML() {
     return head(t('settings')) + `<div class="p-body">
       <div class="row"><span>${esc(t('s_music'))}</span><button class="switch" data-act="music" data-k="music"></button></div>
       <div class="row"><span>${esc(t('s_sfx'))}</span><button class="switch" data-act="sfx" data-k="sfx"></button></div>
+      <div class="row"><span>${esc(t('s_night'))}</span><button class="switch" data-act="night" data-k="night"></button></div>
       <div class="row"><span>${esc(t('s_lang'))}</span><button class="switch on" data-act="lang">${esc(t('lang_name'))}</button></div>
       <div class="btns"><button class="btn flat" data-act="help">${esc(t('m_help'))}</button><button class="btn flat" data-act="save">${esc(t('s_save'))}</button></div>
       <div class="btns"><button class="btn yellow" data-act="tomenu">${esc(t('s_menu'))}</button></div></div>`;
   }
   return null;
 }
+export function starsHTML(n) {
+  let h = '';
+  for (let i = 0; i < 3; i++) h += `<span class="${i < n ? 'got' : ''}">${icon('star')}</span>`;
+  return h;
+}
 export function goalText(i) {
-  const g = GOALS[i];
-  if (g.id === 'g_open') return t('g_open');
-  if (g.id.startsWith('g_guests')) return t('g_guests', num(g.n));
-  if (g.id.startsWith('g_coaster')) return t('g_coaster', num(g.n, g.n % 1 ? 1 : 0));
-  if (g.id.startsWith('g_rating')) return t('g_ratingx', num(g.n));
-  return t('g_value', money(g.n));
+  const g = goalsOf()[i];
+  switch (g.k) {
+    case 'open': return t('g_open');
+    case 'guests': return t('g_guests', num(g.n));
+    case 'coaster': return t('g_coaster', num(g.n, g.n % 1 ? 1 : 0));
+    case 'rating': return t('g_ratingx', num(g.n));
+    case 'coasters': return t('g_coasters', num(g.n));
+    case 'rides': return t('g_rides', num(g.n));
+    case 'inv': return t('g_inv', num(g.n));
+    case 'high': return t('g_high', num(g.n));
+    case 'speed': return t('g_speed', num(g.n));
+    default: return t('g_value', money(g.n));
+  }
 }
 function thoughtText(th) {
   const o = S.objs[th[1]];
@@ -578,6 +760,8 @@ function panelValues() {
       v.tim = t('secs', num(s.T)); v.gmax = t('gforce', num(s.maxGv, 1)); v.air = t('secs', num(s.air, 1));
     }
     v.cust = num(o.customers); v.inc = money(Math.round(o.income));
+    v.watch = t(ui.follow === o.id ? 'watch_stop' : 'watch');
+    return { v, w, show, cls: { open: o.open }, col: o.kind === 'coaster' ? 'col' + (o.col | 0) : null };
   } else if (p.type === 'guest') {
     const g = S.gmap && S.gmap.get(p.id);
     if (!g) { v.thoughts = `<li>${esc(t('g_gone'))}</li>`; return { v, w, show, html: { thoughts: 1 } }; }
@@ -605,11 +789,11 @@ function panelValues() {
     v.table = rows;
     return { v, w, show, html: { table: 1 } };
   } else if (p.type === 'research') {
-    const R = S.research;
-    if (R.done < RESEARCH.length) {
-      const proj = RESEARCH[R.done];
+    const R = S.research, ri = researchNext();
+    if (ri >= 0) {
+      const proj = RESEARCH[ri];
       v.proj = t(proj.id); v.pct = num(Math.min(100, (R.pts / proj.pts) * 100)) + '%'; w.prog = Math.min(100, (R.pts / proj.pts) * 100);
-      v.next = RESEARCH.slice(R.done + 1, R.done + 4).map((r) => `<li>${esc(t(r.id))}</li>`).join('') || `<li>–</li>`;
+      v.next = RESEARCH.filter((r, k) => k > ri && r.unlocks.some((u) => !S.unlocked[u])).slice(0, 4).map((r) => `<li>${esc(t(r.id))}</li>`).join('') || `<li>–</li>`;
     }
     return { v, w, show, html: { next: 1 }, on: { ['rl' + R.level]: 1 } };
   } else if (p.type === 'goals') {
@@ -620,16 +804,16 @@ function panelValues() {
       : `<li>${esc(t(S.guests.length ? 'g_nothoughts' : 'p_none'))}</li>`;
     return { v, w, show, html: { thoughts: 1 } };
   } else if (p.type === 'settings') {
-    v.music = t(audio.music ? 'on' : 'off'); v.sfx = t(audio.sfx ? 'on' : 'off');
-    return { v, w, show, cls: { music: audio.music, sfx: audio.sfx } };
+    v.music = t(audio.music ? 'on' : 'off'); v.sfx = t(audio.sfx ? 'on' : 'off'); v.night = t(look.night ? 'on' : 'off');
+    return { v, w, show, cls: { music: audio.music, sfx: audio.sfx, night: look.night } };
   }
   return { v, w, show, cls: p.type === 'obj' ? { open: S.objs[p.id].open } : {} };
 }
 function panelSig() {
   const p = panel;
   if (p.type === 'obj') { const o = S.objs[p.id]; return o ? [o.closed, o.sim && o.sim.ok, o.I > 9, lang].join() : 'x'; }
-  if (p.type === 'goals') return [S.goal, S.goalsDone, lang].join();
-  if (p.type === 'research') return [S.research.done >= RESEARCH.length, lang].join();
+  if (p.type === 'goals') return [S.goal, S.goalsDone, S.stars, lang].join();
+  if (p.type === 'research') return [researchNext() < 0, lang].join();
   return lang;
 }
 export function refreshPanel() {
@@ -669,6 +853,7 @@ export function refreshPanel() {
   }
   for (const el of els.panel.querySelectorAll('[data-show]')) el.hidden = !d.show[el.dataset.show];
   if (d.on) for (const el of els.panel.querySelectorAll('[data-act^="rl"]')) el.classList.toggle('on', !!d.on[el.dataset.act]);
+  if (d.col) for (const el of els.panel.querySelectorAll('[data-act^="col"]')) el.classList.toggle('on', el.dataset.act === d.col);
 }
 function onPanel(e) {
   const b = e.target.closest('[data-act]');
@@ -687,7 +872,9 @@ function onPanel(e) {
     else if (a === 'test') {
       if (o.st !== 'idle') { o.open = false; toast(t('closed')); }
       else if (startTest(o)) { ui.follow = o.id; els.testhud.hidden = false; sfx('whoosh'); }
-    }
+    } else if (a === 'watch') {
+      if (ui.follow === o.id) stopFollow(); else { ui.follow = o.id; els.testhud.hidden = false; }
+    } else if (a.startsWith('col')) { o.col = +a.slice(3); for (const pc of o.pieces) pc.geo = null; }
   } else if (panel.type === 'finance') {
     if (a === 'fee+') S.fee = Math.min(80, S.fee + 1);
     else if (a === 'fee-') S.fee = Math.max(0, S.fee - 1);
@@ -701,7 +888,7 @@ function onPanel(e) {
   } else if (panel.type === 'research') {
     if (a.startsWith('rl')) S.research.level = +a.slice(2);
   } else if (panel.type === 'settings') {
-    if (a === 'music' || a === 'sfx' || a === 'lang' || a === 'save' || a === 'tomenu') ui.hooks[a]();
+    if (a === 'music' || a === 'sfx' || a === 'lang' || a === 'save' || a === 'tomenu' || a === 'night') ui.hooks[a]();
     else if (a === 'help') showHelp();
   }
   refreshPanel();
@@ -717,20 +904,25 @@ export function buildHUD() {
   $('st-cash').innerHTML = icon('coin') + '<b></b>'; $('st-cash').title = t('finances');
   $('st-guests').innerHTML = icon('guest') + '<b></b>'; $('st-guests').title = t('guests');
   $('st-rating').innerHTML = icon('star') + '<b></b>'; $('st-rating').title = t('rating');
+  els.undo.innerHTML = icon('undo') + `<span>${esc(t('b_undo'))}</span>`;
+  wxKey = '';
   buildTools(); traySig = ''; buildTray(true);
   if (ui.editing) buildBuilder();
   if (panel) { panel.sig = ''; refreshPanel(); }
   lastTut = -1;
   refreshHUD();
 }
-let lastTut = -1;
+let lastTut = -1, wxKey = '';
 export function refreshHUD() {
   const set = (id, txt) => { const b = $(id).querySelector('b'); if (b.textContent !== txt) b.textContent = txt; };
   set('st-cash', S.sandbox ? '∞' : money(Math.floor(S.cash)));
   set('st-guests', num(S.guests.length));
   set('st-rating', num(Math.round(S.rating)));
   const d = date(), ds = t('date', d.day, t('months')[d.month], d.year);
-  if (els.date.textContent !== ds) els.date.textContent = ds;
+  if (els.dateText.textContent !== ds) els.dateText.textContent = ds;
+  const wk = look.night && darkness() > 0.5 ? 'moon' : S.wx ? S.wx.kind : 'sun';
+  if (wk !== wxKey) { wxKey = wk; els.wx.innerHTML = icon('wx_' + wk); els.date.title = t('wx_' + wk); }
+  if (ui.undo && (performance.now() - ui.undo.at > 30000 || !els.panel.hidden)) clearUndo();
   const ob = $('b-open'), ot = (S.open ? 'close' : 'open') + lang;
   if (ob.dataset.t !== ot) {
     ob.dataset.t = ot;
@@ -770,7 +962,7 @@ function tutorial() {
   if (lastTut === S.tut) return;
   lastTut = S.tut;
   const next = S.tut === 0 || S.tut === 6;
-  els.tutorial.innerHTML = `<div>${esc(t('tut_' + S.tut))}${S.tut === 1 && ui.touch ? ' ' + esc(t('tut_touch')) : ''}</div>
+  els.tutorial.innerHTML = `<div>${esc(t('tut_' + S.tut))}${S.tut === 1 ? ' ' + esc(t(ui.touch ? 'tut_touch' : 'tut_mouse')) : ''}</div>
     <div class="t-btns">${S.tut < 6 ? `<button class="btn flat" data-tut="skip">${esc(t('tut_skip'))}</button>` : ''}${next ? `<button class="btn yellow" data-tut="next">${esc(t(S.tut === 6 ? 'ok' : 'tut_next'))}</button>` : ''}</div>`;
 }
 
@@ -778,12 +970,22 @@ function tutorial() {
 export function handleEvents() {
   while (events.length) {
     const e = events.shift();
-    if (e.type === 'goal') { toast(t('goal_done') + (e.reward ? ' +' + money(e.reward) : ''), 'good'); sfx('goal'); if (panel && panel.type === 'goals') panel.sig = ''; }
+    if (e.type === 'goal') {
+      toast(t('goal_done') + (e.reward ? ' +' + money(e.reward) : ''), 'good'); sfx('goal'); confetti(view.w, view.h, 70);
+      if (panel && panel.type === 'goals') panel.sig = '';
+    } else if (e.type === 'star') { toast(t('star_got', e.n), 'good'); confetti(view.w, view.h, 140); ui.hooks.star(e.n); }
     else if (e.type === 'research') { toast(t('research_done', t(e.id)), 'good'); sfx('unlock'); traySig = ''; if (ui.editing) buildBuilder(); }
     else if (e.type === 'ach') { toast(t('ach', t('a')[e.id]), 'good'); ui.hooks.achievement(e.id); }
     else if (e.type === 'month') ui.hooks.month();
-    else if (e.type === 'closed') { if (ui.editing === e.id) { toast(t('b_complete'), 'good'); sfx('goal'); } }
-    else if (e.type === 'dispatch') { /* trains leave quietly so a busy park does not get noisy */ }
+    else if (e.type === 'closed') { if (ui.editing === e.id) { toast(t('b_complete'), 'good'); sfx('goal'); confetti(view.w, view.h, 60); } }
+    else if (e.type === 'built') {
+      const o = S.objs[e.id];
+      if (o) { o.pop = performance.now() / 1000; const [x, y] = objCenter(o); burst(x, y + 8, 'dust', 14); }
+    } else if (e.type === 'dispatch') {
+      const o = S.objs[e.id];
+      if (o && e.sum > 0 && cam.zoom >= 0.5) { const [x, y] = objCenter(o); floatText(x, y - 30, '+' + money(Math.round(e.sum))); }
+      if (o && ui.follow === e.id) sfx('whoosh');
+    } else if (e.type === 'fireworks') toast(t('fireworks'), 'good');
     else if (e.type === 'testdone') {
       if (ui.follow === e.id) { ui.follow = 0; els.testhud.hidden = true; }
       const c = S.objs[e.id];
@@ -797,10 +999,13 @@ export function handleEvents() {
     }
   }
 }
-/** Live read-out while the camera follows a test train. */
+let hudTxt = 'x';
+/** Live read-out while the camera follows a train. */
 export function updateTestHud() {
   const c = S.objs[ui.follow];
-  if (!c || c.st !== 'test' || !ui.followPos) return;
+  if (!c || !c.sim || !ui.followPos) return;
+  if (c.st !== 'test' && c.st !== 'run') { if (hudTxt !== '') { hudTxt = ''; els.testhud.innerHTML = `<div>${esc(t('watch_wait'))}</div>`; } return; }
+  hudTxt = 'x';
   const k = Math.min(c.sim.segs, ui.followPos[2]);
   const hgt = Math.max(0, (c.sim.Z[k % c.sim.n] - c.pieces[0].h0) * 2);
   els.testhud.innerHTML = `<div><span>${esc(t('speed_now'))}</span>${esc(t('kmh', num(c.sim.v[k] * 3.6)))}</div><div><span>↕</span>${esc(t('meters', num(hgt)))}</div><div><span>G</span>${num(c.sim.gv[k] || 1, 1)}</div>`;
@@ -808,8 +1013,9 @@ export function updateTestHud() {
 
 // ---------- map input ----------
 const pointers = new Map();
-let mode = null, lastPaint = -1, lastHover = null, pinch = null;
-const paintTool = (touch) => ui.tool === 'path' || ui.tool === 'demolish' || (!touch && (ui.tool === 'scenery' || ui.tool === 'terrain'));
+let mode = null, lastHover = null, pinch = null, downHandle = null;
+const vel = { x: 0, y: 0, t: 0 }; // the map keeps gliding a little after a drag
+let zoomTo = 0, zoomAtX = 0, zoomAtY = 0;
 const pendingTool = () => (ui.tool === 'ride' || ui.tool === 'stall' || ui.tool === 'coaster') && ui.item;
 
 export function clampCam() {
@@ -839,31 +1045,48 @@ function tap(px, py, touch) {
     ui.pending = tile; ui.ghost = ghostAt(tile); showConfirm(); sfx('click');
     return;
   }
-  applyTool(tile, false);
+  applyTool(tile);
+  // on touch, the tile just built on becomes a grip: drag from it to draw a line or an area
+  if (touch && areaTool()) ui.handle = tile;
   ui.ghost = touch ? null : ghostAt(tile);
 }
+function cancelArea() { ui.area = null; ui.ghost = null; }
 function onDown(e) {
   unlock();
+  const wasTouch = ui.touch;
   ui.touch = e.pointerType === 'touch';
+  if (wasTouch !== ui.touch) updateInfo();
   try { els.canvas.setPointerCapture(e.pointerId); } catch (err) { /* not every pointer can be captured */ }
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: false });
-  ui.camTarget = null;
+  ui.camTarget = null; vel.x = vel.y = 0; zoomTo = 0;
   if (pointers.size === 2) {
     const [a, b] = [...pointers.values()];
     pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 };
+    if (mode === 'area') cancelArea();
     mode = 'pinch';
     return;
   }
   if (pointers.size > 2) return;
-  if (e.button === 1 || e.button === 2) { mode = 'pan'; return; }
-  if (!ui.editing && paintTool(ui.touch) && (ui.item || ui.tool === 'demolish')) {
-    mode = 'paint'; lastPaint = -1;
+  if (e.button === 1 || e.button === 2) { if (mode === 'area') cancelArea(); mode = 'pan'; return; }
+  if (ui.editing) {
+    downHandle = handleAt(e.clientX, e.clientY);
+    mode = downHandle ? 'handle' : 'tap';
+    if (downHandle) ui.hot = downHandle.key;
+    return;
+  }
+  if (areaTool()) {
     const tile = pickTile(e.clientX, e.clientY);
     if (ui.touch) {
-      // wait for the finger to move or lift: a second finger may still land to pan or zoom instead
-      pointers.get(e.pointerId).first = tile;
-    } else if (tile) { lastPaint = idx(tile.x, tile.y); applyTool(tile, false); ui.ghost = ghostAt(tile); }
-    return;
+      // one finger moves the map, unless it starts on the grip left by the last tap
+      if (tile && ui.handle && Math.abs(tile.x - ui.handle.x) + Math.abs(tile.y - ui.handle.y) <= 1) {
+        mode = 'area'; ui.area = { a: ui.handle, b: ui.handle, grip: true };
+        return;
+      }
+    } else if (tile) {
+      mode = 'area'; ui.area = { a: tile, b: tile };
+      ui.ghost = areaGhost([[tile.x, tile.y]]);
+      return;
+    }
   }
   mode = 'tap';
 }
@@ -871,6 +1094,12 @@ function onMove(e) {
   const p = pointers.get(e.pointerId);
   if (!p) {
     if (e.pointerType === 'mouse') {
+      if (ui.editing) {
+        const h = handleAt(e.clientX, e.clientY);
+        ui.hot = h ? h.key : null;
+        els.canvas.classList.toggle('point', !!h);
+        return;
+      }
       const tile = pickTile(e.clientX, e.clientY);
       lastHover = tile;
       if (!ui.pending) ui.ghost = ghostAt(tile);
@@ -889,17 +1118,28 @@ function onMove(e) {
     clampCam();
     return;
   }
-  if (mode === 'paint') {
+  if (mode === 'area' && ui.area) {
     if (ui.touch && !p.moved) return;
-    if (p.first) { lastPaint = idx(p.first.x, p.first.y); applyTool(p.first, true); p.first = null; }
-    const tile = pickTile(e.clientX, e.clientY);
-    if (tile && idx(tile.x, tile.y) !== lastPaint) { lastPaint = idx(tile.x, tile.y); applyTool(tile, true); }
-    if (!ui.touch) ui.ghost = ghostAt(tile);
+    const tile = pickTile(e.clientX, e.clientY), A = ui.area;
+    if (tile && (tile.x !== A.b.x || tile.y !== A.b.y)) {
+      // an L-shaped line first runs the way the drag set off
+      if (A.b.x === A.a.x && A.b.y === A.a.y) A.firstY = Math.abs(tile.y - A.a.y) > Math.abs(tile.x - A.a.x);
+      if (tile.x === A.a.x) A.firstY = true; else if (tile.y === A.a.y) A.firstY = false;
+      A.b = tile;
+      ui.ghost = areaGhost(areaTiles(A.a, A.b, A.firstY));
+    }
     return;
   }
+  if (mode === 'handle') {
+    if (p.moved) { mode = 'pan'; ui.hot = null; }
+    else return;
+  }
   if (mode === 'pan' || (mode === 'tap' && p.moved)) {
+    if (mode !== 'pan' && ui.follow && !ui.editing) stopFollow();
     mode = 'pan';
     cam.x -= dx / cam.zoom; cam.y -= dy / cam.zoom;
+    const now = performance.now(), dtm = Math.max(8, now - vel.t);
+    vel.x = vel.x * 0.5 + ((-dx / cam.zoom) / dtm) * 500; vel.y = vel.y * 0.5 + ((-dy / cam.zoom) / dtm) * 500; vel.t = now;
     clampCam();
     if (S.tut === 0 && Math.hypot(p.x - p.sx, p.y - p.sy) > 120) S.tut = 1;
   }
@@ -908,54 +1148,95 @@ function onUp(e) {
   const p = pointers.get(e.pointerId);
   pointers.delete(e.pointerId);
   if (!p) return;
-  if (mode === 'tap' && !p.moved && e.type === 'pointerup') tap(e.clientX, e.clientY, e.pointerType === 'touch');
-  else if (mode === 'paint' && p.first && e.type === 'pointerup') applyTool(p.first, false);
+  const up = e.type === 'pointerup', touch = e.pointerType === 'touch';
+  if (mode === 'tap' && !p.moved && up) tap(e.clientX, e.clientY, touch);
+  else if (mode === 'handle' && up) {
+    const h = handleAt(e.clientX, e.clientY);
+    if (h && downHandle && h.key === downHandle.key) {
+      if (h.kind || h.ok) builderAct(h.key); else fail({ why: h.why });
+    }
+    if (touch) ui.hot = null;
+  } else if (mode === 'area' && ui.area) {
+    const A = ui.area;
+    ui.area = null;
+    if (!up) ui.ghost = null;
+    else if (A.grip && !p.moved) tap(e.clientX, e.clientY, true);
+    else {
+      applyArea(areaTiles(A.a, A.b, A.firstY), !!A.grip && !(A.a.x === A.b.x && A.a.y === A.b.y));
+      if (touch) { ui.handle = A.b; ui.ghost = null; } else ui.ghost = ghostAt(pickTile(e.clientX, e.clientY));
+    }
+  }
+  if (mode === 'pan' && pointers.size === 0 && performance.now() - vel.t > 90) vel.x = vel.y = 0;
+  if (mode !== 'pan') vel.x = vel.y = 0;
+  downHandle = null;
   if (pointers.size === 0) mode = null;
-  else if (mode === 'pinch') mode = 'pan';
+  else if (mode === 'pinch') { mode = 'pan'; vel.x = vel.y = 0; }
 }
 function onWheel(e) {
   e.preventDefault();
   ui.camTarget = null;
   const dy = e.deltaMode === 1 ? e.deltaY * 30 : e.deltaY;
-  zoomAt(e.clientX, e.clientY, Math.exp(-Math.max(-200, Math.min(200, dy)) * 0.0016));
+  // glide towards the new zoom instead of jumping
+  zoomTo = Math.max(0.35, Math.min(2.6, (zoomTo || cam.zoom) * Math.exp(-Math.max(-200, Math.min(200, dy)) * 0.0018)));
+  zoomAtX = e.clientX; zoomAtY = e.clientY;
 }
 const keys = new Set();
+const BUILD_KEYS = {
+  arrowleft: 'l', arrowup: 's', arrowright: 'r', arrowdown: 'undo', backspace: 'undo', z: 'undo', c: 'chain', b: 'bank', v: 'wide',
+  l: 'loop', k: 'cork', f: 'auto', t: 'test', enter: 'done', e: 'up', q: 'down', 1: 'slope-2', 2: 'slope-1', 3: 'slope0', 4: 'slope1', 5: 'slope2',
+};
 function onKey(e) {
   if (e.target.tagName === 'INPUT' || els.hud.hidden) return;
   if (e.type === 'keyup') { keys.delete(e.key.toLowerCase()); return; }
   const k = e.key.toLowerCase();
   if (!els.modal.hidden) { if (k === 'escape' || k === 'enter') els.modal.click(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === 'z') { if (ui.editing) builderAct('undo'); else doUndo(); e.preventDefault(); return; }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (ui.editing && BUILD_KEYS[k]) { builderAct(BUILD_KEYS[k]); e.preventDefault(); return; }
   if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd'].includes(k)) { keys.add(k); e.preventDefault(); return; }
   if (k === 'r') rotate();
   else if (k === 'escape') {
-    if (ui.pending) { ui.pending = null; ui.ghost = null; showConfirm(); }
+    if (ui.area) { cancelArea(); mode = 'tap'; for (const p of pointers.values()) p.moved = true; }
+    else if (ui.pending) { ui.pending = null; ui.ghost = null; showConfirm(); }
     else if (ui.editing) exitEditor();
     else if (ui.tool !== 'inspect') selectTool('inspect');
     else closePanel();
   } else if (k === ' ') { S.speed = S.speed ? 0 : 1; e.preventDefault(); }
-  else if (k === '+' || k === '=') zoomAt(view.w / 2, view.h / 2, 1.2);
-  else if (k === '-') zoomAt(view.w / 2, view.h / 2, 1 / 1.2);
-  else if ((k === 'backspace' || k === 'z') && ui.editing) { const b = els.builder.querySelector('[data-b="undo"]'); if (b) b.click(); e.preventDefault(); }
+  else if (k === '+' || k === '=') { zoomTo = Math.min(2.6, (zoomTo || cam.zoom) * 1.25); zoomAtX = view.w / 2; zoomAtY = view.h / 2; }
+  else if (k === '-') { zoomTo = Math.max(0.35, (zoomTo || cam.zoom) / 1.25); zoomAtX = view.w / 2; zoomAtY = view.h / 2; }
 }
-/** Camera movement from keys, following a test train, and gliding to a target. */
+/** Camera movement: keys, gliding after a drag, smooth zoom, following a train, and moving to a target. */
 export function moveCamera(dt) {
   const sp = (520 / cam.zoom) * dt;
   let moved = false;
-  if (keys.has('arrowleft') || keys.has('a')) { cam.x -= sp; moved = true; }
-  if (keys.has('arrowright') || keys.has('d')) { cam.x += sp; moved = true; }
-  if (keys.has('arrowup') || keys.has('w')) { cam.y -= sp; moved = true; }
-  if (keys.has('arrowdown') || keys.has('s')) { cam.y += sp; moved = true; }
-  if (moved) { ui.camTarget = null; if (S.tut === 0) S.tut = 1; }
+  if (keys.has('a') || (!ui.editing && keys.has('arrowleft'))) { cam.x -= sp; moved = true; }
+  if (keys.has('d') || (!ui.editing && keys.has('arrowright'))) { cam.x += sp; moved = true; }
+  if (keys.has('w') || (!ui.editing && keys.has('arrowup'))) { cam.y -= sp; moved = true; }
+  if (keys.has('s') || (!ui.editing && keys.has('arrowdown'))) { cam.y += sp; moved = true; }
+  if (moved) { ui.camTarget = null; if (S.tut === 0) S.tut = 1; if (ui.follow && !ui.editing) stopFollow(); }
+  if (zoomTo) {
+    const z = cam.zoom + (zoomTo - cam.zoom) * Math.min(1, dt * 14);
+    zoomAt(zoomAtX, zoomAtY, z / cam.zoom);
+    if (Math.abs(zoomTo - cam.zoom) < 0.002) zoomTo = 0;
+  }
+  if (!pointers.size && (vel.x || vel.y)) {
+    cam.x += vel.x * dt; cam.y += vel.y * dt;
+    const f = Math.exp(-5.5 * dt);
+    vel.x *= f; vel.y *= f;
+    if (Math.hypot(vel.x, vel.y) < 8) vel.x = vel.y = 0;
+  }
   const c = ui.follow && S.objs[ui.follow];
-  if (c && c.st === 'test' && ui.followPos && !pointers.size) {
-    const k = Math.min(1, dt * 4);
-    cam.x += (ui.followPos[0] - cam.x) * k; cam.y += (ui.followPos[1] - cam.y) * k;
+  if (c && ui.followPos && !pointers.size) {
+    // keep the train in the middle of the part of the screen that the bars leave free
+    const k = Math.min(1, dt * 4), off = ((els.top.offsetHeight + view.h - els.bottom.offsetHeight) / 2 - view.h / 2) / cam.zoom;
+    cam.x += (ui.followPos[0] - cam.x) * k; cam.y += (ui.followPos[1] - off - cam.y) * k;
   } else if (ui.camTarget) {
     const k = Math.min(1, dt * 6);
     cam.x += (ui.camTarget[0] - cam.x) * k; cam.y += (ui.camTarget[1] - cam.y) * k;
     if (Math.hypot(ui.camTarget[0] - cam.x, ui.camTarget[1] - cam.y) < 1) ui.camTarget = null;
   }
   clampCam();
+  layoutHandles();
 }
 export function centerOn(x, y, z) {
   cam.x = isoX(x, y); cam.y = isoY(x, y, z);
@@ -968,8 +1249,13 @@ export function initUI(hooks) {
   els = {
     canvas: $('c'), hud: $('hud'), top: $('top'), bottom: $('bottom'), tools: $('tools'), tray: $('tray'), panel: $('panel'),
     toasts: $('toasts'), modal: $('modal'), confirm: $('confirm'), builder: $('builder'), tutorial: $('tutorial'),
-    speed: $('speed'), date: $('st-date'), testhud: $('testhud'),
+    speed: $('speed'), date: $('st-date'), testhud: $('testhud'), info: $('info'), undo: $('undo'),
+    dateText: $('st-date').querySelector('span'), wx: $('st-date').querySelector('i'),
   };
+  fxHooks.bang = () => sfx('boom');
+  els.undo.addEventListener('click', doUndo);
+  // a mouse wheel over the build menu scrolls it sideways
+  els.tray.addEventListener('wheel', (e) => { if (!e.deltaX) { els.tray.scrollLeft += e.deltaY; e.preventDefault(); } }, { passive: false });
   const c = els.canvas;
   c.addEventListener('pointerdown', onDown);
   c.addEventListener('pointermove', onMove);
@@ -1022,9 +1308,10 @@ export function initUI(hooks) {
 /** Reset the interface for a freshly started or loaded park. */
 export function resetUI() {
   ui.tool = 'inspect'; ui.item = null; ui.ghost = null; ui.sel = null; ui.editing = 0; ui.follow = 0; ui.pending = null; ui.camTarget = null;
+  ui.cands = null; ui.hot = null; ui.handle = null; ui.area = null; clearUndo(); vel.x = vel.y = 0; zoomTo = 0;
   panel = null; els.panel.hidden = true; els.hud.classList.remove('has-panel'); els.builder.hidden = true; els.tools.hidden = false; els.confirm.hidden = true;
   els.testhud.hidden = true; els.toasts.innerHTML = ''; els.modal.hidden = true;
   accessPv = -1; lastTut = -1; traySig = '';
-  pointers.clear(); mode = null;
+  pointers.clear(); mode = null; els.info.hidden = true;
   buildHUD();
 }
