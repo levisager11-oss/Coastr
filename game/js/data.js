@@ -1,6 +1,6 @@
 // Static game data: rides, stalls, scenery, coaster types, research, goals, achievements.
 
-export const N = 40; // map is N x N tiles
+export const N = 60; // map is N x N tiles
 export const DX = [1, 0, -1, 0];
 export const DY = [0, 1, 0, -1];
 export const MAX_TERRAIN = 8;

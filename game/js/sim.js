@@ -78,7 +78,7 @@ function updateRating(att) {
   const n = S.guests.length;
   const happy = (hs + 60 * 5) / (n + 5);
   const clamp = (v) => Math.max(0, Math.min(1, v));
-  const target = 1000 * (0.3 * clamp((happy - 30) / 60) + 0.3 * clamp(att.a / 300) + 0.15 * clamp(S.beautyNow / 420)
+  const target = 1000 * (0.3 * clamp((happy - 30) / 60) + 0.3 * clamp(att.a / 300) + 0.15 * clamp(S.beautyNow / 900)
     + 0.1 * ((att.food + att.drink + att.toilet) / 3) + 0.15 * clamp(att.best / 8));
   S.rating += (target - S.rating) * 0.06;
 }
@@ -190,7 +190,7 @@ function checkAchievements(att) {
   if (n >= 300) award('guests-300');
   if (att.best >= 7) award('thrill-maker');
   if (S.rating >= 800) award('rating-800');
-  if (S.sceneryCount >= 200) award('gardener');
+  if (S.sceneryCount >= 300) award('gardener');
   if (parkValue() >= 250000) award('tycoon');
   for (const id in S.objs) {
     const o = S.objs[id];

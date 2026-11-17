@@ -52,7 +52,10 @@ svg { display: block; }
   display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px;
   padding: calc(8px + var(--st)) calc(8px + var(--sr)) 0 calc(8px + var(--sl));
 }
-#top > * { pointer-events: auto; }
+#top > *, #top .pill, #top .btn, #top .seg { pointer-events: auto; }
+/* inside another page (Toki) the top-right corner can be covered by that page's own close button */
+.embedded #top { padding-right: calc(60px + var(--sr)); }
+#b-open .short { display: none; }
 .stats, .ctrl { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .ctrl { margin-left: auto; justify-content: flex-end; }
 
@@ -195,6 +198,7 @@ table.fin .pos { color: #05805f; }
 .m-head, .m-list { display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
 .logo { text-align: center; font-size: clamp(54px, 17vw, 84px); font-weight: 900; letter-spacing: -0.03em; line-height: 1; color: #fff; -webkit-text-stroke: 3px var(--ink); paint-order: stroke fill; text-shadow: 0 6px 0 var(--ink); }
 .logo i { font-style: normal; color: var(--yellow); }
+.tip { text-align: center; color: #fff; background: var(--ink); border-radius: 10px; padding: 5px 9px; font-size: 12px; margin: 0 auto; }
 .tag { text-align: center; color: var(--ink); background: rgba(255, 255, 255, 0.85); border-radius: 12px; padding: 6px 10px; margin: 2px auto 6px; font-size: 15px; }
 .m-btn { background: var(--card); border-radius: 16px; box-shadow: var(--shadow); padding: 12px 16px; text-align: left; display: flex; flex-direction: column; gap: 2px; transition: transform 0.06s; }
 .m-btn:active { transform: translateY(2px); }
@@ -234,13 +238,14 @@ table.fin .pos { color: #05805f; }
   #tools button { padding: 4px 1px 3px; }
   #tools button canvas, #tools button svg { width: 30px; height: 26px; flex: none; }
   #tools button span { font-size: 10.5px; }
-  /* two tidy rows at the top: numbers and panels first, then date, park gate and speed */
+  /* two tidy rows at the top. The first holds only numbers and stops well before the right edge,
+     because a host page may put its own close button in that corner; every button sits in row two. */
   .stats, .ctrl { display: contents; }
-  #top { justify-content: flex-start; row-gap: 6px; }
-  #st-cash { order: 1; } #st-guests { order: 2; } #st-rating { order: 3; }
-  #b-goals { order: 4; margin-left: auto; } #b-research { order: 5; } #b-menu { order: 6; }
-  #st-date { order: 7; } #b-open { order: 8; margin-left: auto; } #speed { order: 9; }
-  #top::after { content: ""; order: 6; flex-basis: 100%; height: 0; margin-top: -6px; }
+  #top, .embedded #top { justify-content: flex-start; row-gap: 10px; padding-right: calc(8px + var(--sr)); }
+  #st-cash { order: 1; } #st-guests { order: 2; } #st-rating { order: 3; } #st-date { order: 4; }
+  #top::after { content: ""; order: 5; flex-basis: 100%; height: 0; margin-top: -10px; }
+  #b-goals { order: 6; } #b-research { order: 7; } #b-menu { order: 8; }
+  #b-open { order: 9; margin-left: auto; } #speed { order: 10; }
   #tray .card { width: 76px; }
   #tray .card canvas { width: 56px; height: 44px; }
   #builder .grp button { min-width: 40px; height: 44px; padding: 0 3px; }
@@ -249,19 +254,72 @@ table.fin .pos { color: #05805f; }
   #builder .grp.wide { width: 100%; }
   #builder .grp.wide button { flex: 1; }
 }
+@media (max-width: 400px) {
+  #st-date { display: none; }
+  #b-open .long { display: none; }
+  #b-open .short { display: inline; }
+  .seg button { min-width: 30px; padding: 0 4px; }
+  .btn.icon { width: 34px; }
+}
 @media (max-width: 380px) {
-  #top { gap: 4px; row-gap: 5px; }
+  #top { gap: 4px; }
   .pill { padding: 0 6px; gap: 3px; }
   .pill svg { width: 15px; height: 15px; }
-  .btn.icon { width: 34px; }
-  .seg button { min-width: 28px; padding: 0 4px; }
+  .seg button { min-width: 28px; }
   #b-open { padding: 0 8px; }
   #tools button span { font-size: 9.5px; }
 }
 @media (max-width: 350px) {
-  #st-date { display: none; }
-  #b-open { margin-left: 0; }
-  #speed { margin-left: auto; }
+  #b-goals { display: none; }
+}
+/* small boxes: narrow and short, like a game shown inside a page on a phone before going fullscreen */
+@media (max-height: 480px) and (max-width: 560px) {
+  .pill, .btn { min-height: 30px; }
+  .pill { font-size: 12.5px; }
+  .btn.icon { width: 32px; }
+  .btn.icon svg { width: 17px; height: 17px; }
+  .seg { padding: 2px; }
+  .seg button { height: 26px; }
+  #top, .embedded #top { row-gap: 5px; padding-top: calc(5px + var(--st)); }
+  #top::after { margin-top: -5px; }
+  #bottom { gap: 4px; padding-bottom: calc(5px + var(--sb)); }
+  #tools { grid-template-columns: repeat(8, minmax(0, 1fr)); padding: 3px; }
+  #tools button { padding: 3px 0; }
+  #tools button span { display: none; }
+  #tools button canvas, #tools button svg { width: 28px; height: 24px; }
+  #tray { padding: 4px; gap: 4px; }
+  #tray .card { width: 70px; padding: 2px 2px 3px; }
+  #tray .card canvas { width: 44px; height: 34px; }
+  #tray .card .nm { min-height: 0; font-size: 9.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; max-width: 100%; }
+  #tray .card .pr { font-size: 10.5px; }
+  /* panels cover the whole box here: there is no room for them beside the map */
+  #panel { top: calc(5px + var(--st)); bottom: calc(5px + var(--sb)); left: calc(5px + var(--sl)); right: calc(5px + var(--sr)); width: auto; max-height: none; z-index: 12; }
+  #hud.has-panel #tutorial { display: none; }
+  #tutorial { font-size: 12px; padding: 6px 9px; max-width: 100%; }
+  #tutorial .t-btns { margin-top: 4px; }
+  #tutorial .btn { min-height: 26px; font-size: 12px; }
+  .toast { font-size: 12px; padding: 5px 9px; }
+  #confirm .btn { min-height: 36px; padding: 0 12px; font-size: 13.5px; }
+  #builder { padding: 4px 6px; }
+  #builder .b-head { margin-bottom: 2px; }
+  #builder .b-head b { font-size: 13px; }
+  #builder .b-head span, #builder .b-status { font-size: 11px; }
+  #builder .b-status { padding-bottom: 2px; }
+  #builder .b-rows { gap: 3px; }
+  #builder .grp { padding: 2px; gap: 2px; }
+  #builder .grp button { height: 30px; min-width: 30px; padding: 0 2px; }
+  #builder .grp button span { display: none; }
+  #builder .grp button svg { width: 18px; height: 18px; }
+  #builder .grp button.big { min-width: 40px; }
+  .m-card { gap: 6px; }
+  .m-head, .m-list { gap: 6px; }
+  .logo { font-size: 46px; -webkit-text-stroke-width: 2px; text-shadow: 0 4px 0 var(--ink); }
+  .tag { font-size: 12.5px; padding: 4px 8px; margin: 0 auto 2px; }
+  .m-btn { padding: 7px 12px; border-radius: 12px; }
+  .m-btn b { font-size: 15px; }
+  .m-btn span { font-size: 11.5px; }
+  .m-row .btn { min-height: 34px; }
+  .dialog { padding: 10px; gap: 7px; }
 }
 /* short landscape screens (phones held sideways): tools sit in the bottom-left corner, menus run along the bottom */
 @media (max-height: 480px) and (min-width: 561px) {
@@ -283,7 +341,7 @@ table.fin .pos { color: #05805f; }
   .m-btn b { font-size: 16px; }
   .m-list { gap: 7px; }
   .m-row .btn { min-height: 38px; }
-  #panel { top: calc(var(--th) + 6px); bottom: auto; left: auto; width: 290px; max-height: calc(100% - var(--th) - 12px); z-index: 8; }
+  #panel { top: calc(var(--th) + 10px); bottom: auto; left: auto; width: 290px; max-height: calc(100% - var(--th) - 16px); z-index: 8; }
   #builder { padding: 5px 8px; width: auto; }
   #builder .b-head { margin-bottom: 3px; }
   #builder .b-status { padding-bottom: 3px; }

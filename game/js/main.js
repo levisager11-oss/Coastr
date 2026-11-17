@@ -1,5 +1,5 @@
 // Start-up, main menu, the game loop, saving, and the Toki hooks.
-import { S, newGame, serialize, deserialize, events, parkValue } from './world.js';
+import { S, newGame, serialize, deserialize, events, parkValue, idx } from './world.js';
 import { tick, initAfterLoad } from './sim.js';
 import { render, cam, view, isoX, isoY, toScreen } from './render.js';
 import {
@@ -16,6 +16,10 @@ const menuEl = document.getElementById('menu');
 const hudEl = document.getElementById('hud');
 const KEY = { career: 'coastr.save.career', sandbox: 'coastr.save.sandbox', settings: 'coastr.settings' };
 let playing = false;
+// shown inside another page (the game page on Toki)?
+let embedded = false;
+try { embedded = window.parent !== window; } catch (e) { embedded = true; }
+if (embedded) document.documentElement.classList.add('embedded');
 const demoUi = { ghost: null, sel: null, editing: 0, follow: 0 };
 
 // ---------- storage ----------
@@ -49,18 +53,22 @@ function resize() {
   view.w = w; view.h = h; view.dpr = dpr;
   const cw = Math.round(w * dpr), ch = Math.round(h * dpr);
   if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
+  if (!playing && menuEl.firstChild && (h < 420) !== menuSmall) buildMenu();
 }
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', () => setTimeout(resize, 200));
 if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
 
 // ---------- menu ----------
+let menuSmall = false;
 function buildMenu() {
+  menuSmall = view.h < 420;
   const hasCareer = !!load(KEY.career), hasSandbox = !!load(KEY.sandbox);
   const sw = (on) => (on ? t('on') : t('off'));
   menuEl.innerHTML = `<div class="m-card"><div class="m-head">
     <div class="logo">Coast<i>r</i></div>
     <div class="tag">${t('tagline')}</div>
+    ${embedded && view.h < 420 ? `<div class="tip">${t('tip_fullscreen')}</div>` : ''}
   </div><div class="m-list">
     ${hasCareer ? `<button class="m-btn main" data-m="career"><b>${t('m_continue')}</b><span>${t('m_career_desc')}</span></button>
       <button class="m-btn" data-m="career-new"><b>${t('m_new_career')}</b></button>`
@@ -111,7 +119,7 @@ function startGame(mode, fresh) {
   menuEl.hidden = true; hudEl.hidden = false;
   resetUI();
   cam.zoom = view.w < 600 ? 0.8 : 1;
-  centerOn(S.ent.x + 0.5, S.ent.y - 6, S.h[S.ent.x + (S.ent.y - 6) * 40] || 2);
+  centerOn(S.ent.x + 0.5, S.ent.y - 6, S.h[idx(S.ent.x, S.ent.y - 6)] || 2);
   saveGame(false);
 }
 function toMenu() {
@@ -123,7 +131,7 @@ function toMenu() {
   demoView();
   buildMenu();
 }
-function demoView() { cam.zoom = view.w < 600 ? 0.75 : 1.05; centerOn(20, 27, 2); }
+function demoView() { cam.zoom = view.w < 600 ? 0.75 : 1.05; centerOn(S.ent.x, S.ent.y - 12, 2); }
 
 const hooks = {
   music() { setMusic(!audio.music); saveSettings(); },
@@ -179,4 +187,4 @@ buildDemo(); events.length = 0;
 demoView();
 buildMenu();
 requestAnimationFrame(frame);
-window.__coastr = { S, ui, cam, startGame, hooks, at: (x, y) => toScreen(isoX(x + 0.5, y + 0.5), isoY(x + 0.5, y + 0.5, S.h[x + y * 40])) }; // handy for testing in the browser console
+window.__coastr = { S, ui, cam, startGame, hooks, at: (x, y) => toScreen(isoX(x + 0.5, y + 0.5), isoY(x + 0.5, y + 0.5, S.h[idx(x, y)])) }; // handy for testing in the browser console

@@ -21,11 +21,11 @@ function rng(seed) {
 export function newGame(mode) {
   for (const k of Object.keys(S)) delete S[k];
   Object.assign(S, {
-    v: 1, mode, sandbox: mode === 'sandbox',
+    v: 2, mode, sandbox: mode === 'sandbox',
     h: new Uint8Array(N * N).fill(BASE_H), water: new Uint8Array(N * N), path: new Uint8Array(N * N),
     scn: new Uint8Array(N * N), occ: new Int32Array(N * N),
     objs: {}, nextId: 1, trk: new Map(), pv: 1,
-    ent: { x: 20, y: N - 1 },
+    ent: { x: N >> 1, y: N - 1 },
     cash: mode === 'sandbox' ? 0 : START_CASH, loan: 0, fee: 8, open: false,
     time: 0, speed: 1, guests: [], gid: 1, rating: 500, peakGuests: 0,
     unlocked: {}, research: { level: 1, pts: 0, done: 0 },
@@ -41,13 +41,19 @@ export function newGame(mode) {
     S.tut = 99;
   }
   genTerrain();
+  countScenery();
   return S;
 }
 
+// The first version of the game had a 40 x 40 map. Its area now sits at the front centre of the
+// bigger map, so old saves can be dropped in at this offset.
+const OLD_N = 40, OLD_OX = (N - OLD_N) >> 1, OLD_OY = N - OLD_N;
+
 function genTerrain() {
   const r = rng(S.sandbox ? 777 : 4242);
-  // soft hills in the far corners
-  const hills = [[5, 5, 7, 3], [33, 6, 6, 2], [6, 30, 5, 2], [34, 22, 4, 1]];
+  // soft hills around the edges; the middle stays flat for building
+  const hills = [[15, 25, 7, 3], [43, 26, 6, 2], [16, 50, 5, 2], [44, 42, 4, 1],
+    [6, 6, 8, 4], [52, 8, 8, 3], [4, 37, 5, 2], [56, 35, 6, 3], [54, 55, 5, 2], [29, 3, 5, 2]];
   for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
     let add = 0;
     for (const [hx, hy, rad, amp] of hills) {
@@ -56,15 +62,15 @@ function genTerrain() {
     }
     S.h[idx(x, y)] = BASE_H + add;
   }
-  // a pond
+  // a pond near the entrance and a second one further back
   for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-    const d = Math.hypot((x - 29) * 0.8, y - 31);
-    if (d < 2.6) { S.water[idx(x, y)] = 1; S.h[idx(x, y)] = BASE_H - 1; }
+    const d1 = Math.hypot((x - 39) * 0.8, y - 51), d2 = Math.hypot((x - 34) * 0.8, y - 14);
+    if (d1 < 2.6 || d2 < 2.2) { S.water[idx(x, y)] = 1; S.h[idx(x, y)] = BASE_H - 1; }
   }
   // entrance path
   for (let y = N - 1; y >= N - 5; y--) S.path[idx(S.ent.x, y)] = 1;
   // scattered trees
-  for (let i = 0; i < 150; i++) {
+  for (let i = 0; i < 340; i++) {
     const x = Math.floor(r() * N), y = Math.floor(r() * N), i2 = idx(x, y);
     if (S.water[i2] || S.path[i2] || S.scn[i2]) continue;
     if (Math.abs(x - S.ent.x) < 5 && y > N - 12) continue;
@@ -386,8 +392,8 @@ export function serialize() {
     objs.push(c);
   }
   return {
-    v: 1, mode: S.mode, h: enc(S.h), water: enc(S.water), path: enc(S.path), scn: enc(S.scn), objs,
-    nextId: S.nextId, ent: S.ent, cash: S.cash, loan: S.loan, fee: S.fee, open: S.open, time: S.time,
+    v: 2, n: N, mode: S.mode, h: enc(S.h), water: enc(S.water), path: enc(S.path), scn: enc(S.scn), objs,
+    nextId: S.nextId, cash: S.cash, loan: S.loan, fee: S.fee, open: S.open, time: S.time,
     rating: S.rating, peakGuests: S.peakGuests, unlocked: S.unlocked, research: S.research, goal: S.goal,
     goalsDone: S.goalsDone, ach: S.ach, tut: S.tut, marketing: S.marketing, fin: S.fin, names: S.names,
     guestCount: S.guests.length, sentValue: S.sentValue, sentGuests: S.sentGuests,
@@ -395,14 +401,26 @@ export function serialize() {
 }
 export function deserialize(d) {
   newGame(d.mode);
-  dec(d.h, S.h); dec(d.water, S.water); dec(d.path, S.path); dec(d.scn, S.scn);
+  const n = d.n || OLD_N;
+  let ox = 0, oy = 0;
+  if (n === N) { dec(d.h, S.h); dec(d.water, S.water); dec(d.path, S.path); dec(d.scn, S.scn); }
+  else {
+    // a park saved on the smaller map: place it at the front centre of the new one
+    ox = (N - n) >> 1; oy = N - n;
+    for (const k of ['h', 'water', 'path', 'scn']) {
+      const old = dec(d[k], new Uint8Array(n * n));
+      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) S[k][idx(x + ox, y + oy)] = old[x + y * n];
+    }
+  }
   S.occ.fill(0);
   for (const o of d.objs) {
+    if (o.kind === 'coaster') { for (const p of o.pieces) { p.x += ox; p.y += oy; } }
+    o.x += ox; o.y += oy;
     S.objs[o.id] = o;
     o.queue = []; o.riders = []; o.st = 'idle'; o.timer = 0;
     if (o.kind !== 'coaster') for (let j = 0; j < o.h; j++) for (let i = 0; i < o.w; i++) S.occ[idx(o.x + i, o.y + j)] = o.id;
   }
-  for (const k of ['nextId', 'ent', 'cash', 'loan', 'fee', 'open', 'time', 'rating', 'peakGuests', 'unlocked',
+  for (const k of ['nextId', 'cash', 'loan', 'fee', 'open', 'time', 'rating', 'peakGuests', 'unlocked',
     'research', 'goal', 'goalsDone', 'ach', 'tut', 'marketing', 'fin', 'names', 'sentValue', 'sentGuests']) {
     if (d[k] !== undefined) S[k] = d[k];
   }

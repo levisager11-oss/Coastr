@@ -21,7 +21,8 @@ const en = {
   d_mini: 'Small and cheap. No steep hills.', d_wood: 'Tall hills and lots of airtime.', d_steel: 'Very tall, with loops and banked turns.',
   locked: 'Research',
 
-  open_park: 'Open park', close_park: 'Close park', goals: 'Goals', research: 'Research', finances: 'Money', menu: 'Menu',
+  open_park: 'Open park', close_park: 'Close park', open_short: 'Open', close_short: 'Close',
+  tip_fullscreen: 'Tip: use Fullscreen below the game for more room.', goals: 'Goals', research: 'Research', finances: 'Money', menu: 'Menu',
   park: 'Park', guests: 'Guests', rating: 'Park rating', pause: 'Pause', speed1: 'Normal speed', speed2: 'Fast', speed4: 'Very fast',
   date: '{0} {1}, Year {2}',
   months: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
@@ -140,7 +141,8 @@ const de = {
   d_mini: 'Klein und günstig. Keine steilen Hügel.', d_wood: 'Hohe Hügel und viel Airtime.', d_steel: 'Sehr hoch, mit Loopings und Steilkurven.',
   locked: 'Forschung',
 
-  open_park: 'Park öffnen', close_park: 'Park zumachen', goals: 'Ziele', research: 'Forschung', finances: 'Geld', menu: 'Menü',
+  open_park: 'Park öffnen', close_park: 'Park zumachen', open_short: 'Öffnen', close_short: 'Zumachen',
+  tip_fullscreen: 'Tipp: Mit Vollbild unter dem Spiel hast du mehr Platz.', goals: 'Ziele', research: 'Forschung', finances: 'Geld', menu: 'Menü',
   park: 'Park', guests: 'Gäste', rating: 'Parkwertung', pause: 'Pause', speed1: 'Normales Tempo', speed2: 'Schnell', speed4: 'Sehr schnell',
   date: '{0}. {1}, Jahr {2}',
   months: ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'],

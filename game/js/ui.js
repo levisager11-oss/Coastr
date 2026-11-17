@@ -731,8 +731,12 @@ export function refreshHUD() {
   set('st-rating', num(Math.round(S.rating)));
   const d = date(), ds = t('date', d.day, t('months')[d.month], d.year);
   if (els.date.textContent !== ds) els.date.textContent = ds;
-  const ob = $('b-open'), ot = t(S.open ? 'close_park' : 'open_park');
-  if (ob.textContent !== ot) ob.textContent = ot;
+  const ob = $('b-open'), ot = (S.open ? 'close' : 'open') + lang;
+  if (ob.dataset.t !== ot) {
+    ob.dataset.t = ot;
+    ob.innerHTML = `<span class="long">${esc(t(S.open ? 'close_park' : 'open_park'))}</span><span class="short">${esc(t(S.open ? 'close_short' : 'open_short'))}</span>`;
+    ob.title = t(S.open ? 'close_park' : 'open_park');
+  }
   ob.classList.toggle('is-open', !!S.open);
   for (const b of els.speed.children) b.classList.toggle('on', +b.dataset.speed === S.speed);
   $('st-cash').style.color = !S.sandbox && S.cash < 0 ? '#d63a5f' : '';
@@ -809,13 +813,13 @@ const paintTool = (touch) => ui.tool === 'path' || ui.tool === 'demolish' || (!t
 const pendingTool = () => (ui.tool === 'ride' || ui.tool === 'stall' || ui.tool === 'coaster') && ui.item;
 
 export function clampCam() {
-  cam.zoom = Math.max(0.45, Math.min(2.6, cam.zoom));
+  cam.zoom = Math.max(0.35, Math.min(2.6, cam.zoom));
   cam.x = Math.max(-N * 32, Math.min(N * 32, cam.x));
   cam.y = Math.max(-80, Math.min(N * 32 + 60, cam.y));
 }
 function zoomAt(px, py, factor) {
   const [wx, wy] = toWorld(px, py);
-  cam.zoom = Math.max(0.45, Math.min(2.6, cam.zoom * factor));
+  cam.zoom = Math.max(0.35, Math.min(2.6, cam.zoom * factor));
   cam.x = wx - (px - view.w / 2) / cam.zoom;
   cam.y = wy - (py - view.h / 2) / cam.zoom;
   clampCam();
