@@ -69,6 +69,17 @@ export function rideStats(o) {
   return RIDES[o.type];
 }
 export const rideWorth = (E) => 1.5 + E * 1.6;
+/**
+ * How much a ride pulls guests for its age: new rides are the talk of the park for half a year,
+ * and after three years they slowly lose their shine until they are renovated. 1 = normal.
+ */
+export function buzz(o) {
+  if (o.born === undefined) return 1;
+  const m = (S.time - o.born) / 60;
+  if (m < 6) return 1.3 - 0.05 * m;
+  if (m > 36) return Math.max(0.75, 1 - (m - 36) * 0.01);
+  return 1;
+}
 export function rideUsable(o) {
   if (!o.open) return false;
   if (o.kind === 'coaster') return o.closed && o.sim && o.sim.ok;
@@ -196,6 +207,7 @@ function chooseTarget(g, i) {
   }
   if (Math.random() < 0.15) return null;
   // pick a ride
+  const fans = S.event && S.event.id === 'fans';
   let total = 0, any = false;
   const opts = [];
   for (const id in S.objs) {
@@ -204,7 +216,7 @@ function chooseTarget(g, i) {
     any = true;
     if (!reach(String(o.id), i)) continue;
     const st = rideStats(o);
-    if (st.I > g.tol[1]) continue;
+    if (st.I > g.tol[1] + (fans ? 2 : 0)) continue;
     if (o.queue.length >= queueMax(o)) continue;
     if (o.price > rideWorth(st.E) * (0.85 + g.sus * 0.2)) {
       if (Math.random() < 0.3) { think(g, 'th_expensive', o.id); g.happy -= 1.5; }
@@ -212,6 +224,7 @@ function chooseTarget(g, i) {
     }
     if (o.price > g.cash) continue;
     let w = (0.5 + st.E) * (0.5 + st.E) / (1 + 2 * (g.rode[o.id] || 0));
+    w *= buzz(o) * (fans && o.kind === 'coaster' ? 1.6 : 1);
     if (st.I < g.tol[0]) w *= 0.3;
     opts.push([o.id, w]); total += w;
   }
@@ -311,7 +324,7 @@ export function updateGuest(g, dt) {
   g.tIn += dt; g.cc -= dt; g.cool -= dt;
   if (g.emT > 0) g.emT -= dt;
   g.hunger = Math.min(100, g.hunger + 0.22 * dt);
-  g.thirst = Math.min(100, g.thirst + 0.28 * dt);
+  g.thirst = Math.min(100, g.thirst + (S.event && S.event.id === 'heat' ? 0.62 : 0.28) * dt);
   g.toilet = Math.min(100, g.toilet + 0.13 * dt);
   g.nausea = Math.max(0, g.nausea - 1.1 * dt);
   g.energy = Math.max(0, g.energy - 0.14 * dt);

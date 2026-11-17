@@ -11,9 +11,9 @@ import {
 import {
   canStartCoaster, startCoaster, addPiece, undoPiece, autoFinish, endState, previewPiece, posAt, trainDist, alterable, alterPiece, cutAfter,
 } from './coaster.js';
-import { rideWorth, rideStats, rideUsable } from './guests.js';
-import { date, feeWorth, goalProgress, startTest, coasterCap, goalsOf, researchNext, darkness, maxTrains, trainsOf, trainCost } from './sim.js';
-import { cam, view, look, pickTile, pickThing, toWorld, isoX, isoY, coasterThumb, objCenter } from './render.js';
+import { rideWorth, rideStats, rideUsable, buzz } from './guests.js';
+import { date, feeWorth, goalProgress, startTest, coasterCap, goalsOf, researchNext, darkness, maxTrains, trainsOf, trainCost, renovate, renovateCost } from './sim.js';
+import { cam, view, look, pickTile, pickThing, toWorld, isoX, isoY, coasterThumb, objCenter, miniMap, miniMapTile } from './render.js';
 import { drawRide, drawStall, thumbRide, thumbStall, thumbScenery, drawScenery } from './sprites.js';
 import { t, money, num, lang } from './i18n.js';
 import { sfx, unlock, audio } from './audio.js';
@@ -672,6 +672,7 @@ function panelHTML() {
       h += `<div class="row"><span>${esc(t('price'))}</span><div class="stepper"><button data-act="price-" aria-label="-">−</button><b data-k="price"></b><button data-act="price+" aria-label="+">+</button></div></div>`;
       if (!isS && usable) h += `<div class="hint" data-k="worth"></div>`;
     }
+    if (!isS && usable) h += `<div class="note" data-show="age" data-k="age"></div><div class="btns" data-show="reno"><button class="btn blue" data-act="renovate" data-k="reno"></button></div>`;
     if (!isS && usable) {
       h += meter('E', t('excitement')) + meter('I', t('intensity')) + meter('Q', t('nausea'));
       if (isC && o.I > 9) h += `<div class="warn">${esc(t('too_intense'))}</div>`;
@@ -723,7 +724,9 @@ function panelHTML() {
     const goals = goalsOf(), SC = SCENARIOS[S.sc] || SCENARIOS.meadows;
     let h = head(t('sc_' + S.sc)) + '<div class="p-body">';
     if (!S.sandbox) h += `<div class="stars big">${starsHTML(S.stars || 0)}</div>`;
-    h += `<div class="facts">${fact('guests', t('guests'))}${fact('rating', t('rating'))}${fact('peak', t('p_peak'))}${fact('value', t('f_value'))}</div>`;
+    h += `<div class="btns"><button class="btn flat" data-act="park">${esc(t('park_map'))}</button></div>`;
+    h += `<div class="note" data-show="event" data-k="event"></div>`;
+    h += `<div class="facts">${fact('guests', t('guests'))}${fact('rating', t('rating'))}${fact('peak', t('p_peak'))}${fact('value', t('f_value'))}${fact('awards', t('awards'))}${fact('year', t('year_guests'))}</div>`;
     if (S.sandbox) h += `<div class="note">${esc(t('goals_sandbox'))}</div>`;
     else if (S.goalsDone) h += `<div class="note">${esc(t('goals_all'))}</div>`;
     else h += `<h3>${esc(t('goal_n', S.goal + 1, goals.length))}</h3><div class="row" style="align-items:flex-start"><b style="white-space:normal">${esc(goalText(S.goal))}</b></div><div class="prog goal"><i data-w="goal"></i></div><div class="hint" style="margin-top:0">${esc(goals[S.goal].reward ? t('goal_reward', money(goals[S.goal].reward)) : '')}</div>`;
@@ -732,6 +735,14 @@ function panelHTML() {
       h += `<h3>${esc(t('goals'))}</h3><ul class="list">${goals.map((g, i) => `<li class="${i < S.goal ? 'done' : i === S.goal ? 'now' : ''}"><span class="ck">${i < S.goal ? icon('check') : ''}</span><span>${esc(goalText(i))}</span>${SC.stars.includes(i + 1) ? `<span class="cnt st${i < S.goal ? ' got' : ''}">${icon('star')}</span>` : ''}</li>`).join('')}</ul>`;
     }
     return h + '</div>';
+  }
+  if (p.type === 'park') {
+    const row = (o) => `<li data-act="go" data-id="${o.id}"><span class="dot" data-k="d${o.id}"></span><span class="nm2">${esc(objName(o))}</span><span class="cnt" data-k="q${o.id}"></span><span class="cnt inc" data-k="i${o.id}"></span></li>`;
+    const all = Object.values(S.objs), rides = all.filter((o) => o.kind !== 'stall'), stalls = all.filter((o) => o.kind === 'stall');
+    return head(t('park_map')) + `<div class="p-body"><canvas class="minimap" data-act="map" width="552" height="300"></canvas>
+      <div class="btns"><button class="btn flat" data-act="goals">${esc(t('goals'))}</button><button class="btn flat" data-act="entrance">${esc(t('to_entrance'))}</button></div>
+      <h3>${esc(t('t_rides'))}</h3><ul class="list rides">${rides.map(row).join('') || `<li>${esc(t('list_none'))}</li>`}</ul>
+      ${stalls.length ? `<h3>${esc(t('t_stalls'))}</h3><ul class="list rides">${stalls.map(row).join('')}</ul>` : ''}</div>`;
   }
   if (p.type === 'settings') {
     return head(t('settings')) + `<div class="p-body">
@@ -780,6 +791,9 @@ function panelValues() {
     show.noaccess = !!o.noAccess;
     if (st) {
       v.worth = t('guests_pay', money(Math.round(rideWorth(st.E) * 2) / 2));
+      const bz = buzz(o), pc = Math.round(Math.abs(bz - 1) * 100);
+      show.age = pc >= 2; show.reno = bz < 0.98;
+      v.age = bz > 1 ? t('age_new', pc) : t('age_old', pc); v.reno = t('renovate', money(renovateCost(o)));
       for (const k of ['E', 'I', 'Q']) { v[k] = num(st[k], 1) + ' ' + word(st[k]); w[k] = Math.min(100, st[k] * 10); }
       v.queue = num(o.queue.length); v.cap = num(isC ? coasterCap(o) * trainsOf(o) : RIDES[o.type].cap);
       if (isC) { v.trains = trainsOf(o) + ' / ' + maxTrains(o); v.trainhint = t(maxTrains(o) > 1 ? 'train_hint' : 'train_short', money(trainCost(o))); }
@@ -828,11 +842,26 @@ function panelValues() {
     return { v, w, show, html: { next: 1 }, on: { ['rl' + R.level]: 1 } };
   } else if (p.type === 'goals') {
     v.guests = num(S.guests.length); v.rating = num(Math.round(S.rating)); v.peak = num(S.peakGuests); v.value = money(parkValue());
+    v.awards = num(Object.values(S.awards || {}).reduce((x, y) => x + y, 0)); v.year = num(S.yr ? S.yr.guests : 0);
+    show.event = !!S.event; if (S.event) v.event = t('ev_now', t('evn_' + S.event.id), Math.max(1, Math.ceil(S.event.left / 2)));
     if (!S.sandbox && !S.goalsDone) w.goal = Math.max(0, Math.min(100, goalProgress(S.goal) * 100));
     const top = Object.entries(S.thoughts).sort((a, b) => b[1] - a[1]).slice(0, 5);
     v.thoughts = top.length ? top.map(([k, n]) => `<li><span>${esc(t('sum')[k] || t(k, '…'))}</span><span class="cnt">${n}</span></li>`).join('')
       : `<li>${esc(t(S.guests.length ? 'g_nothoughts' : 'p_none'))}</li>`;
     return { v, w, show, html: { thoughts: 1 } };
+  } else if (p.type === 'park') {
+    for (const id in S.objs) {
+      const o = S.objs[id], isS = o.kind === 'stall';
+      const bad = o.noAccess || (o.kind === 'coaster' && (!o.closed || !o.sim.ok));
+      v['d' + id] = bad ? '!' : o.open ? '' : '×';
+      v['q' + id] = isS ? num(o.customers) : icon('guest') + num(o.queue.length);
+      v['i' + id] = money(Math.round(o.income));
+    }
+    const cv = els.panel.querySelector('canvas.minimap');
+    if (cv) { const g = cv.getContext('2d'); g.setTransform(2, 0, 0, 2, 0, 0); miniMap(g, 276, 150); }
+    const html = {};
+    for (const id in S.objs) if (S.objs[id].kind !== 'stall') html['q' + id] = 1;
+    return { v, w, show, html, dots: 1 };
   } else if (p.type === 'settings') {
     v.music = t(audio.music ? 'on' : 'off'); v.sfx = t(audio.sfx ? 'on' : 'off'); v.night = t(look.night ? 'on' : 'off');
     return { v, w, show, cls: { music: audio.music, sfx: audio.sfx, night: look.night } };
@@ -844,6 +873,7 @@ function panelSig() {
   if (p.type === 'obj') { const o = S.objs[p.id]; return o ? [o.closed, o.sim && o.sim.ok, o.I > 9, lang].join() : 'x'; }
   if (p.type === 'goals') return [S.goal, S.goalsDone, S.stars, lang].join();
   if (p.type === 'research') return [researchNext() < 0, lang].join();
+  if (p.type === 'park') return Object.keys(S.objs).join() + lang;
   return lang;
 }
 export function refreshPanel() {
@@ -884,6 +914,7 @@ export function refreshPanel() {
   for (const el of els.panel.querySelectorAll('[data-show]')) el.hidden = !d.show[el.dataset.show];
   if (d.on) for (const el of els.panel.querySelectorAll('[data-act^="rl"]')) el.classList.toggle('on', !!d.on[el.dataset.act]);
   if (d.col) for (const el of els.panel.querySelectorAll('[data-act^="col"]')) el.classList.toggle('on', el.dataset.act === d.col);
+  if (d.dots) for (const el of els.panel.querySelectorAll('.dot')) el.className = 'dot' + (el.textContent === '!' ? ' bad' : el.textContent ? ' off' : '');
 }
 function onPanel(e) {
   const b = e.target.closest('[data-act]');
@@ -904,6 +935,9 @@ function onPanel(e) {
       else if (startTest(o)) { ui.follow = o.id; els.testhud.hidden = false; sfx('whoosh'); }
     } else if (a === 'watch') {
       if (ui.follow === o.id) stopFollow(); else { ui.follow = o.id; els.testhud.hidden = false; }
+    } else if (a === 'renovate') {
+      const r = renovate(o);
+      if (r.ok) { sfx('cash'); toast(t('renovated'), 'good'); const [x, y] = objCenter(o); burst(x, y - 20, 'star', 14); } else fail(r);
     } else if (a === 'train+') {
       const cost = trainCost(o);
       if (trainsOf(o) >= maxTrains(o)) { sfx('error'); toast(t('train_max'), 'bad'); }
@@ -912,6 +946,16 @@ function onPanel(e) {
     } else if (a === 'train-') {
       if (trainsOf(o) > 1) { const cost = trainCost(o); earn(Math.round(cost / 2), 'build'); o.cost -= cost; o.trains = trainsOf(o) - 1; }
     } else if (a.startsWith('col')) { o.col = +a.slice(3); for (const pc of o.pieces) pc.geo = null; }
+  } else if (panel.type === 'park') {
+    if (a === 'goals') { openPanel('goals'); return; }
+    if (a === 'entrance') ui.camTarget = [isoX(S.ent.x + 0.5, S.ent.y - 5), isoY(S.ent.x + 0.5, S.ent.y - 5, 2)];
+    else if (a === 'go') {
+      const o = S.objs[b.dataset.id];
+      if (o) { const [x, y] = objCenter(o); ui.camTarget = [x, y - 20]; openPanel('obj', o.id); return; }
+    } else if (a === 'map') {
+      const r = b.getBoundingClientRect(), tl = miniMapTile(((e.clientX - r.left) / r.width) * 276, ((e.clientY - r.top) / r.height) * 150, 276, 150);
+      ui.camTarget = [isoX(tl.x + 0.5, tl.y + 0.5), isoY(tl.x + 0.5, tl.y + 0.5, S.h[idx(tl.x, tl.y)])];
+    }
   } else if (panel.type === 'finance') {
     if (a === 'fee+') S.fee = Math.min(80, S.fee + 1);
     else if (a === 'fee-') S.fee = Math.max(0, S.fee - 1);
@@ -922,6 +966,8 @@ function onPanel(e) {
       if (!canAfford(600)) { fail({ why: 'e_money' }); return; }
       spend(600, 'marketing'); S.marketing = 3; sfx('cash');
     }
+  } else if (panel.type === 'goals') {
+    if (a === 'park') { openPanel('park'); return; }
   } else if (panel.type === 'research') {
     if (a.startsWith('rl')) S.research.level = +a.slice(2);
   } else if (panel.type === 'settings') {
@@ -940,7 +986,7 @@ export function buildHUD() {
   $('b-menu').innerHTML = icon('gear'); $('b-menu').title = t('menu');
   $('st-cash').innerHTML = icon('coin') + '<b></b>'; $('st-cash').title = t('finances');
   $('st-guests').innerHTML = icon('guest') + '<b></b>'; $('st-guests').title = t('guests');
-  $('st-rating').innerHTML = icon('star') + '<b></b>'; $('st-rating').title = t('rating');
+  $('st-rating').innerHTML = icon('star') + '<b></b>'; $('st-rating').title = t('park_map');
   els.undo.innerHTML = icon('undo') + `<span>${esc(t('b_undo'))}</span>`;
   wxKey = '';
   buildTools(); traySig = ''; buildTray(true);
@@ -1023,6 +1069,14 @@ export function handleEvents() {
       if (o && e.sum > 0 && cam.zoom >= 0.5) { const [x, y] = objCenter(o); floatText(x, y - 30, '+' + money(Math.round(e.sum))); }
       if (o && ui.follow === e.id) sfx('whoosh');
     } else if (e.type === 'fireworks') toast(t('fireworks'), 'good');
+    else if (e.type === 'event') { toast(t('ev_' + e.id), 'good'); sfx('unlock'); }
+    else if (e.type === 'eventend') toast(e.id === 'critic' ? t(e.good ? 'evend_critic_good' : 'evend_critic_bad', money(e.prize)) : t('evend_' + e.id), e.good ? '' : 'bad');
+    else if (e.type === 'year') {
+      sfx('goal'); if (e.won.length) confetti(view.w, view.h, 100);
+      dialog(`<h2>${esc(t('year_title', e.year))}</h2><div class="facts"><div>${esc(t('year_guests'))}<b>${num(e.guests)}</b></div><div>${esc(t('year_income'))}<b>${money(e.income)}</b></div></div>
+        ${e.won.length ? `<ul class="list">${e.won.map((id) => `<li><span class="ck" style="background:var(--yellow)">${icon('star')}</span><span>${esc(t(id))}</span></li>`).join('')}</ul>${e.prize ? `<p>${esc(t('year_prize', money(e.prize)))}</p>` : ''}` : `<p>${esc(t('year_none'))}</p>`}`,
+        [{ label: t('ok'), cls: 'yellow', value: 1 }]);
+    }
     else if (e.type === 'testdone') {
       if (ui.follow === e.id) { ui.follow = 0; els.testhud.hidden = true; }
       const c = S.objs[e.id];

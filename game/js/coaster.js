@@ -134,7 +134,7 @@ export function startCoaster(ctype, x, y, d) {
   const c = {
     id: S.nextId++, kind: 'coaster', ctype, num: nameFor(ctype), pieces: [], closed: false, open: false,
     price: 5, queue: [], riders: [], st: 'idle', timer: 0, cost: 0, customers: 0, income: 0,
-    x, y, E: 0, I: 0, Q: 0, runT: 0,
+    x, y, E: 0, I: 0, Q: 0, runT: 0, born: S.time,
   };
   S.objs[c.id] = c;
   for (let k = 0; k < 3; k++) {

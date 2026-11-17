@@ -878,6 +878,32 @@ function arrow(ctx, x, y, z, d, col, sc = 1) {
   ctx.strokeStyle = 'rgba(30,20,50,0.6)'; ctx.lineWidth = 1.5; ctx.lineJoin = 'round'; ctx.stroke();
 }
 
+/** The overview map of the park being played: land, paths, rides, tracks, guests and the part on screen. */
+export function miniMap(ctx, w, h) {
+  const TH = themeOf(S.theme), sx = w / (2 * N), sy = (h - 10) / (2 * N);
+  ctx.fillStyle = TH.far[1]; ctx.fillRect(0, 0, w, h);
+  for (let d = 0; d <= 2 * N - 2; d++) {
+    for (let x = Math.max(0, d - N + 1); x <= Math.min(N - 1, d); x++) {
+      const y = d - x, i = idx(x, y), z = S.h[i];
+      const o = S.occ[i] ? S.objs[S.occ[i]] : null;
+      ctx.fillStyle = o ? (o.kind === 'stall' ? '#f78c1f' : '#9b5de5') : S.trk.has(i) ? '#ef476f' : S.path[i] ? (S.path[i] === 2 ? QUEUE[2] : '#fff3d0')
+        : S.water[i] ? TH.water : S.scn[i] ? shade(TH.pal[Math.min(6, z)][0], -0.16) : TH.pal[Math.min(6, z)][0];
+      ctx.fillRect(w / 2 + (x - y) * sx - sx, 8 + (x + y) * sy - (z - 2) * 1.2, sx * 2 + 0.6, sy * 2 + 0.6 + (z > 2 ? (z - 2) * 1.2 : 0));
+    }
+  }
+  ctx.fillStyle = '#2b2d42';
+  for (let k = 0; k < S.guests.length; k += 2) { const g = S.guests[k]; ctx.fillRect(w / 2 + (g.tx - g.ty) * sx - 0.8, 8 + (g.tx + g.ty) * sy, 1.6, 1.6); }
+  // the part of the park the screen shows
+  const cx = w / 2 + (cam.x / HW) * sx, cy = 8 + ((cam.y + 2 * ZH) / HH) * sy, rw = (view.w / cam.zoom / HW) * sx, rh = (view.h / cam.zoom / HH) * sy;
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.strokeRect(cx - rw / 2, cy - rh / 2, rw, rh);
+  ctx.strokeStyle = '#2b2d42'; ctx.lineWidth = 1; ctx.strokeRect(cx - rw / 2 - 1, cy - rh / 2 - 1, rw + 2, rh + 2);
+}
+/** The tile under a point of the overview map. */
+export function miniMapTile(px, py, w, h) {
+  const u = (px - w / 2) / (w / (2 * N)), v = (py - 8) / ((h - 10) / (2 * N));
+  return { x: Math.max(0, Math.min(N - 1, Math.round((u + v) / 2))), y: Math.max(0, Math.min(N - 1, Math.round((v - u) / 2))) };
+}
+
 /** A tiny picture of a whole map for the scenario list. m = {h, water, scn, path, theme}. */
 export function mapThumb(ctx, m, w, h) {
   const TH = themeOf(m.theme), sx = w / (2 * N), sy = (h - 10) / (2 * N);

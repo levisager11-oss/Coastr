@@ -2,8 +2,8 @@
 import {
   N, RIDES, STALLS, SCENERY, COASTERS, RESEARCH, RESEARCH_LEVELS, SCENARIOS, DAY_LEN, MONTH_DAYS, MAX_GUESTS, DAY_CYCLE,
 } from './data.js';
-import { S, idx, accessTiles, spend, earn, canAfford, parkValue, emit, countWater } from './world.js';
-import { field, makeGuest, updateGuest, unloadRider, rideUsable, rideStats, think } from './guests.js';
+import { S, idx, accessTiles, spend, earn, canAfford, parkValue, emit, countWater, objValue } from './world.js';
+import { field, makeGuest, updateGuest, unloadRider, rideUsable, rideStats, think, buzz } from './guests.js';
 import { recompute } from './coaster.js';
 
 let secAcc = 0, spawnAcc = 0;
@@ -18,6 +18,7 @@ export function initAfterLoad() {
   for (const id in S.objs) {
     const o = S.objs[id];
     if (o.kind === 'coaster') { recompute(o); o.capacity = coasterCap(o); }
+    if (o.kind !== 'stall' && o.born === undefined) o.born = S.time - 12 * 60;
   }
   if (S.restoreGuests) {
     const f = field('exit'), tiles = [];
@@ -48,10 +49,10 @@ export function attraction() {
       const st = rideStats(o);
       rides++;
       if (o.kind === 'coaster') {
-        a += 8 + st.E * 6; best = Math.max(best, st.E); coasters++;
+        a += (8 + st.E * 6) * buzz(o); best = Math.max(best, st.E); coasters++;
         maxInv = Math.max(maxInv, o.inv || 0); maxHm = Math.max(maxHm, o.sim.maxH * 2); maxKmh = Math.max(maxKmh, o.sim.maxV * 3.6);
       }
-      else a += 5 + st.E * 3;
+      else a += (5 + st.E * 3) * buzz(o);
     }
   }
   return { a, best, rides, food, drink, toilet, coasters, maxInv, maxHm, maxKmh };
@@ -71,7 +72,9 @@ export function feeWorth() {
 }
 export function guestTarget(att) {
   const rf = 0.55 + (S.rating / 1000) * 0.85;
-  return Math.min(MAX_GUESTS, Math.round((6 + att.a) * rf * (S.marketing > 0 ? 1.4 : 1)));
+  const ev = S.event ? S.event.id : '';
+  const boost = (S.marketing > 0 ? 1.4 : 1) * (ev === 'holiday' ? 1.35 : ev === 'fans' && att.coasters ? 1.2 : 1);
+  return Math.min(MAX_GUESTS, Math.round((6 + att.a) * rf * boost));
 }
 /** How dark it is right now: 0 in daylight, 1 in the middle of the night. */
 export function darkness() {
@@ -90,6 +93,54 @@ function updateWeather(dt) {
   else w.kind = r < 0.55 ? 'sun' : r < 0.8 ? 'cloud' : 'rain';
   w.t = w.kind === 'sun' ? 70 + Math.random() * 90 : 35 + Math.random() * 40;
 }
+// Now and then something happens for a month or so: holidays, a heat wave, coaster fans, a critic.
+const EVENTS = { holiday: 60, heat: 45, fans: 60, critic: 45 };
+function updateEvents(dt) {
+  if (S.demo) return;
+  if (S.event) {
+    S.event.left -= dt;
+    if (S.event.left > 0) return;
+    const id = S.event.id;
+    S.event = null; S.evNext = S.time + 170 + Math.random() * 130;
+    let prize = 0;
+    if (id === 'critic' && S.rating >= 650) { prize = 1500; if (!S.sandbox) earn(prize, 'rewards'); S.marketing = Math.max(S.marketing, 2); }
+    emit('eventend', { id, prize, good: id !== 'critic' || prize > 0 });
+    return;
+  }
+  if (S.time < (S.evNext || 0)) return;
+  if (!S.open || S.guests.length < 15) { S.evNext = S.time + 40; return; }
+  const ids = Object.keys(EVENTS).filter((id) => id !== 'heat' || S.theme !== 'snow');
+  const id = ids[(Math.random() * ids.length) | 0];
+  S.event = { id, left: EVENTS[id] };
+  if (id === 'heat') S.wx = { kind: 'sun', t: EVENTS[id] };
+  emit('event', { id });
+}
+// At the turn of the year the park is judged and may win awards.
+function yearEnd(year) {
+  const Y = S.yr || { guests: 0, income: 0, peak: 0 }, att = S.att || attraction();
+  let hs = 0;
+  for (const g of S.guests) hs += g.happy;
+  const happy = S.guests.length ? hs / S.guests.length : 0, won = [];
+  if (S.guests.length >= 20 && happy >= 72) won.push('aw_happy');
+  if (att.best >= 6.5) won.push('aw_thrill');
+  if ((S.beautyNow || 0) >= 450) won.push('aw_beauty');
+  if (Y.peak >= 150) won.push('aw_busy');
+  if (S.rating >= 750) won.push('aw_park');
+  if (!S.awards) S.awards = {};
+  for (const id of won) { S.awards[id] = (S.awards[id] || 0) + 1; if (!S.sandbox) earn(1000, 'rewards'); }
+  emit('year', { year, guests: Y.guests, income: Math.round(Y.income), won, prize: S.sandbox ? 0 : won.length * 1000 });
+  S.yr = { guests: 0, income: 0, peak: 0 };
+}
+/** Bring a ride that has grown old back to normal. Costs a quarter of what it is worth. */
+export const renovateCost = (o) => Math.round(objValue(o) * 0.25 / 10) * 10;
+export function renovate(o) {
+  const cost = renovateCost(o);
+  if (!canAfford(cost)) return { ok: false, why: 'e_money' };
+  spend(cost, 'build');
+  o.born = S.time - 3 * 60; // a little of the buzz of a new ride comes back
+  return { ok: true };
+}
+
 // a short firework show once every evening, if the park is doing well
 function updateShow(dt) {
   if (S.fw > 0) S.fw = Math.max(0, S.fw - dt);
@@ -303,6 +354,7 @@ function everySecond() {
   updateRating(att);
   S.target = S.open ? guestTarget(att) : 0;
   if (S.guests.length > S.peakGuests) S.peakGuests = S.guests.length;
+  if (S.yr && S.guests.length > S.yr.peak) S.yr.peak = S.guests.length;
   checkGoals(att);
   checkAchievements(att);
   if (!S.sandbox && S.waterNow >= 60) award('lake');
@@ -321,7 +373,12 @@ function newMonth() {
   if (run) spend(run, 'running');
   if (S.loan > 0) spend(Math.round(S.loan * 0.01), 'interest');
   if (S.marketing > 0) S.marketing--;
+  if (!S.yr) S.yr = { guests: 0, income: 0, peak: 0 };
+  const cur = S.fin.cur;
+  S.yr.income += (cur.tickets || 0) + (cur.rides || 0) + (cur.stalls || 0);
   S.fin.last = S.fin.cur; S.fin.cur = {};
+  const dd = date();
+  if (dd.month === 0 && !S.demo) yearEnd(dd.year - 1);
   for (const k in S.thoughts) { S.thoughts[k] = Math.floor(S.thoughts[k] * 0.4); if (!S.thoughts[k]) delete S.thoughts[k]; }
   S.turnedAway = 0;
   emit('month');
@@ -335,6 +392,7 @@ function spawn() {
   if (S.fee) earn(S.fee, 'tickets');
   if (S.fee > worth * 0.85) g.happy -= 6;
   S.guests.push(g);
+  if (S.yr) S.yr.guests++;
 }
 
 /** Advance the simulation by dt seconds of game time. */
@@ -354,7 +412,7 @@ export function tick(dt) {
 
   secAcc += dt;
   if (secAcc >= 1) { secAcc -= 1; if (secAcc > 1) secAcc = 0; everySecond(); }
-  updateWeather(dt); updateShow(dt);
+  updateWeather(dt); updateShow(dt); updateEvents(dt);
   if (S.open && S.guests.length < (S.target || 0)) {
     spawnAcc += dt * Math.min(1.2, 0.15 + ((S.target || 0) - S.guests.length) / 25) * (isWet() ? 0.6 : 1);
     while (spawnAcc >= 1) { spawnAcc -= 1; spawn(); }

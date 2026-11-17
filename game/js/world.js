@@ -32,7 +32,7 @@ export function newGame(mode, scenario) {
     unlocked: {}, research: { level: 1, pts: 0, done: 0 },
     goal: 0, goalsDone: false, stars: 0, ach: {}, tut: 0, marketing: 0, turnedAway: 0,
     fin: { cur: {}, last: {} }, thoughts: {}, sceneryCount: 0, sentValue: 0, sentGuests: 0,
-    names: {}, wx: { kind: 'sun', t: 90 },
+    names: {}, wx: { kind: 'sun', t: 90 }, event: null, evNext: 260, yr: { guests: 0, income: 0, peak: 0 }, awards: {},
   });
   for (const u of [...START_UNLOCKS, ...SC.extra]) S.unlocked[u] = 1;
   if (S.sandbox) { unlockAll(); S.tut = 99; }
@@ -261,7 +261,7 @@ export function placeRide(type, x, y, rot) {
   const o = {
     id: S.nextId++, kind: 'ride', type, x: f.x, y: f.y, w: f.w, h: f.h, rot: rot % 2, z: r.z,
     price: d.price, open: true, queue: [], riders: [], st: 'idle', timer: 0, anim: 0,
-    num: nameFor(type), customers: 0, income: 0,
+    num: nameFor(type), customers: 0, income: 0, born: S.time,
   };
   claim(o); spend(d.cost, 'build');
   emit('built', { kind: 'ride', id: o.id });
@@ -495,6 +495,7 @@ export function serialize() {
     rating: S.rating, peakGuests: S.peakGuests, unlocked: S.unlocked, research: S.research, goal: S.goal,
     goalsDone: S.goalsDone, stars: S.stars, ach: S.ach, tut: S.tut, marketing: S.marketing, fin: S.fin, names: S.names,
     guestCount: S.guests.length, sentValue: S.sentValue, sentGuests: S.sentGuests, wx: S.wx,
+    event: S.event, evNext: S.evNext, yr: S.yr, awards: S.awards,
   };
 }
 export function deserialize(d) {
@@ -520,7 +521,8 @@ export function deserialize(d) {
     if (o.kind !== 'coaster') for (let j = 0; j < o.h; j++) for (let i = 0; i < o.w; i++) S.occ[idx(o.x + i, o.y + j)] = o.id;
   }
   for (const k of ['nextId', 'cash', 'loan', 'fee', 'open', 'time', 'rating', 'peakGuests', 'unlocked',
-    'research', 'goal', 'goalsDone', 'stars', 'ach', 'tut', 'marketing', 'fin', 'names', 'sentValue', 'sentGuests', 'wx']) {
+    'research', 'goal', 'goalsDone', 'stars', 'ach', 'tut', 'marketing', 'fin', 'names', 'sentValue', 'sentGuests', 'wx',
+    'event', 'evNext', 'yr', 'awards']) {
     if (d[k] !== undefined) S[k] = d[k];
   }
   if (S.sandbox) unlockAll(); // things added to the game since this park was saved
