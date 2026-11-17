@@ -17,7 +17,7 @@ python3 -m http.server 8000 --directory game
 - `world.js`, `coaster.js`, `guests.js`, `sim.js` and `data.js` never touch the DOM, so they can be
   imported in Node to build a park in code, call `tick(dt)` and inspect the result. Use this for
   balance and save/load checks.
-- In the browser, `window.__coastr` exposes `S` (state), `ui`, `cam`, `startGame(mode, fresh, scenario)`
+- In the browser, `window.__coastr` exposes `S` (state), `ui`, `cam`, `look`, `startGame(mode, fresh, scenario)`
   and `at(x, y)` (screen position of a tile, as `[x, y]`). Handy for driving the game from Playwright.
   `mode` is `'career'` or `'sandbox'`; `scenario` is an id from `SCENARIOS` in `data.js`.
 - To look at a single sprite, import `sprites.js` in the page and draw it on a canvas of your own.
@@ -97,8 +97,13 @@ TOKI_KEY="$TOKI_KEY" node /tmp/toki-upload.mjs .
 **State**
 - All game state lives in the single mutable object `S` in `world.js`. Change it through the
   functions there, which return `{ ok }` or `{ ok: false, why: 'e_...' }`; `why` is an i18n key.
-- Bump `S.pv` whenever paths, objects or open/closed states change. The guest path-finding cache
-  and the "not next to a path" warnings depend on it.
+- Bump `S.pv` whenever paths, objects or open/closed states change. The guest path-finding cache,
+  the "not next to a path" warnings, the queue lines and the kept ground picture depend on it.
+- `S.path` holds 0 (none), 1 (path) or 2 (queue line). A path on a water tile is a bridge: guests
+  walk at `walkH(i)` (one level above the water's bed), so use `walkH` for anything about where
+  feet are, not `S.h`.
+- Events (`S.event`), the year's tally (`S.yr`), awards (`S.awards`) and each ride's birthday
+  (`o.born`, used by `buzz()` in `guests.js`) are part of the saved state.
 - `events` (in `world.js`) queues things for the UI: goals, research, achievements, month end.
 
 **Coasters**
@@ -110,7 +115,13 @@ TOKI_KEY="$TOKI_KEY" node /tmp/toki-upload.mjs .
 - The renderer draws a multi-tile piece in parts, one per tile, so trains and scenery sort correctly
   (`parts` in `buildGeo`). Cached drawing geometry is rebuilt when `S.tv` changes (terrain or water).
 - In the builder, `ui.cands` holds the choices shown as round buttons on the map; `builderAct` is
-  the one place every builder action goes through (buttons, map buttons and keys).
+  the one place every builder action goes through (buttons, map buttons and keys). `ui.pick` is the
+  piece tapped for changing; `alterPiece` and `cutAfter` (`coaster.js`) do the work.
+- Several trains: `c.trains` (1 to `maxTrains(c)`), each train out on the track is an entry
+  `{ t, riders }` in `c.runs` (`updateTrains` in `sim.js`). `c.riders` is everyone on all of them.
+  `c.runs` is not saved.
+- Track and train pictures are in `track.js`. Its geometry cache (`piece.geo`) must hold everything
+  that can be worked out once; drawing a piece should be a handful of fills and strokes.
 - Edit tracks through `addPiece` / `undoPiece` / `autoFinish`, which also clear the cached drawing
   geometry (`piece.geo`) and re-register tiles in `S.trk`.
 
@@ -158,6 +169,16 @@ TOKI_KEY="$TOKI_KEY" node /tmp/toki-upload.mjs .
   previews, badges, map buttons) are drawn after that layer, in `drawOverlays`.
 - Sprites and tiles run every frame for everything on screen: no `shadowBlur`, no `filter`, no
   per-frame canvas creation, and no gradients in scenery.
+- Speed (`render.js`, `main.js`): the backdrop and all ground tiles are drawn once into a picture
+  a quarter larger than the screen (`drawGround`) and copied each frame; it is redrawn when the
+  camera leaves it, the zoom settles, or `S.tv` / `S.pv` change. Only tiles marked in `occl` (higher
+  than ground just behind them) are drawn again in order, so they can still hide things. Anything
+  in `drawTile` that moves must cope with `time < 0`, which means "for the kept picture".
+  `look.ground = false` switches the picture off for comparing. `look.q` (0 to 3) lowers the
+  drawing resolution and drops small details; `tuneQuality` in `main.js` sets it from measured
+  frame times unless `look.auto` is false. Set `look.auto = false` in tests that compare pictures.
+- Tried and dropped: keeping each ride as its own picture refreshed every few frames. Uploading the
+  changed pictures cost more than drawing the rides.
 - `cover.png` and `shots/*.png` were captured from the running game at 1280x720.
 
 **Scope**

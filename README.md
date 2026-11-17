@@ -9,14 +9,18 @@ Play it on Toki: https://playtoki.app/game/coastr
 
 - **Coaster builder**: four coaster types (mini, wooden, steel, launch) with lift hills, gentle and
   steep slopes, tight and wide turns, banking, loops, corkscrews, boosters and brakes. You build by
-  tapping arrows on the map at the end of the track (or with the arrow keys). Ratings for excitement,
-  intensity and nausea are worked out from the track itself the moment the circuit is closed; red dots
-  show where a track is too rough. Each coaster can be painted and its train followed by the camera.
+  tapping arrows on the map at the end of the track (or with the arrow keys), and change a finished
+  track by tapping one of its pieces. Ratings for excitement, intensity and nausea are worked out
+  from the track itself the moment the circuit is closed; red dots show where a track is too rough.
+  Each coaster can be painted, run up to three trains, and have its train followed by the camera.
 - **Four scenarios** on different maps and in different looks (meadow, lagoon, desert, snowy
   mountain), each with its own goals and three stars to earn, plus a **sandbox** on any map with
   everything unlocked.
 - **Park management**: guests with hunger, thirst, energy and opinions; ride and ticket prices;
-  loans, advertising and research.
+  loans, advertising and research. Events (holidays, heat waves, coaster fans, a critic), rides
+  that are the talk of the park when new and want renovating when old, and awards every year.
+- Paths cross water as bridges; queue lines in front of rides hold the waiting guests.
+- An overview map and a list of all rides, one tap away.
 - A 60 by 60 tile park with land shaping and water, 18 kinds of scenery, 15 flat rides and 8 stalls.
 - **A living park**: day and night with lights, rain and snow, an evening firework show, guests who
   show what they think, queues you can see.
@@ -61,7 +65,10 @@ shows the game. There is no build step and no test suite; run the game to check 
 | `game/js/coaster.js` | Track pieces, track geometry, physics and ratings |
 | `game/js/guests.js` | Guest behaviour and path finding |
 | `game/js/sim.js` | Time, ride cycles, money, research, goals and stars, weather, day and night |
-| `game/js/render.js`, `sprites.js` | Isometric drawing, themes, night lighting |
+| `game/js/render.js` | The frame: ground, depth sorting, guests, night lighting, overlays, overview map |
+| `game/js/sprites.js` | Pictures of rides, stalls and scenery |
+| `game/js/track.js` | Pictures of coaster tracks, stations and trains |
+| `game/js/iso.js` | Shared isometric maths and colour helpers |
 | `game/js/fx.js` | Particles, floating numbers, confetti, fireworks, rain and snow |
 | `game/js/ui.js` | Toolbar, panels, coaster builder, mouse and touch input |
 | `game/js/i18n.js` | All text, English and German |
