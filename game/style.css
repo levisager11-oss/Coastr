@@ -134,6 +134,12 @@ svg { display: block; }
 #builder .b-status { font-size: 12.5px; padding: 0 2px 6px; font-weight: 700; color: var(--soft); min-height: 1.3em; }
 #builder .b-status.bad { color: #d63a5f; }
 #builder .b-status.good { color: #05805f; }
+#builder .b-pick { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; background: #fff6cf; border-radius: 12px; padding: 4px 4px 4px 10px; margin-bottom: 6px; }
+#builder .b-pick b { font-size: 12.5px; margin-right: auto; }
+#builder .b-pick button { height: 36px; border-radius: 10px; display: flex; align-items: center; gap: 4px; padding: 0 9px; font-size: 11.5px; background: #fff; box-shadow: 0 1px 0 rgba(43, 45, 66, 0.12); }
+#builder .b-pick button svg { width: 18px; height: 18px; flex: none; }
+#builder .b-pick button.on { background: var(--ink); color: #fff; }
+#builder .b-pick button[data-b="p-x"] span { display: none; }
 #builder .b-rows { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
 #builder .grp { display: flex; gap: 4px; background: #eef1f7; border-radius: 12px; padding: 3px; }
 #builder .grp:empty { display: none; }
@@ -364,6 +370,10 @@ table.fin .pos { color: #05805f; }
   #builder .b-status:empty { display: none; }
   #info { display: none; }
   #undo { min-height: 30px; }
+  #builder .b-pick { padding: 2px 2px 2px 8px; margin-bottom: 3px; gap: 3px; }
+  #builder .b-pick b { font-size: 11px; }
+  #builder .b-pick button { height: 26px; padding: 0 6px; }
+  #builder .b-pick button span { display: none; }
   .m-scs { grid-template-columns: 1fr 1fr; gap: 6px; }
   .m-sc { grid-template-columns: 40px minmax(0, 1fr); padding: 4px 5px 4px 4px; gap: 5px; border-radius: 10px; }
   .m-sc > i { width: 40px; height: 28px; border-radius: 7px; }
@@ -425,6 +435,9 @@ table.fin .pos { color: #05805f; }
   #builder .grp button svg { width: 18px; height: 18px; }
   #builder .grp button span { display: none; }
   #builder .grp button.big, #builder .grp button.act { min-width: 40px; }
+  #builder .b-pick { padding: 2px 2px 2px 8px; margin-bottom: 3px; }
+  #builder .b-pick button { height: 30px; padding: 0 7px; }
+  #builder .b-pick button span { display: none; }
   #tutorial { max-width: 330px; font-size: 12.5px; padding: 8px 10px; }
   #st-date { display: none; }
   .dialog { padding: 12px; }

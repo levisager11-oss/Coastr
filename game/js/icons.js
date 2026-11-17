@@ -38,6 +38,7 @@ const ICONS = {
   wx_cloud: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18.500a4.500 4.500 0 0 1-.500-9A6 6 0 0 1 18 10.500a4 4 0 0 1-.500 8z" fill="#aab4c8"/></svg>`,
   wx_rain: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 15a4.500 4.500 0 0 1-.500-9A6 6 0 0 1 18 7a4 4 0 0 1-.500 8z" fill="#8d99b3"/><path d="M8 18l-1 3M12.500 18l-1 3M17 18l-1 3" stroke="#3b8ed0" stroke-width="2" stroke-linecap="round"/></svg>`,
   wx_snow: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 15a4.500 4.500 0 0 1-.500-9A6 6 0 0 1 18 7a4 4 0 0 1-.500 8z" fill="#aab4c8"/><circle cx="8" cy="19.500" r="1.400" fill="#7fc4ee"/><circle cx="12.500" cy="20.500" r="1.400" fill="#7fc4ee"/><circle cx="17" cy="19.500" r="1.400" fill="#7fc4ee"/></svg>`,
+  cut: S('<circle cx="6" cy="6.500" r="2.800"/><circle cx="6" cy="17.500" r="2.800"/><path d="M8.300 8.200L20 18M8.300 15.800L20 6"/>'),
   boost: S('<path d="M4 6l6 6-6 6M11 6l6 6-6 6" style="color:#06a57c"/>'),
   brake: S('<path d="M3 12h18" stroke-width="1.800"/><rect x="6" y="7" width="3.500" height="10" rx="1" fill="#ef476f" stroke="none"/><rect x="14.500" y="7" width="3.500" height="10" rx="1" fill="#ef476f" stroke="none"/>'),
   sound: S('<path d="M4 9.500v5h4l5 4.500V5L8 9.500zM16.500 9a4.500 4.500 0 0 1 0 6M19 6.500a8 8 0 0 1 0 11"/>'),

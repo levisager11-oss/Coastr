@@ -8,7 +8,9 @@ import {
   placeScenery, removeScenery, canTerrain, terrain, canWater, setWater, whatAt, removeObj, objValue, accessTiles,
   parkValue, canAfford, spend, earn, snapshot, restore,
 } from './world.js';
-import { canStartCoaster, startCoaster, addPiece, undoPiece, autoFinish, endState, previewPiece, posAt, trainDist } from './coaster.js';
+import {
+  canStartCoaster, startCoaster, addPiece, undoPiece, autoFinish, endState, previewPiece, posAt, trainDist, alterable, alterPiece, cutAfter,
+} from './coaster.js';
 import { rideWorth, rideStats, rideUsable } from './guests.js';
 import { date, feeWorth, goalProgress, startTest, coasterCap, goalsOf, researchNext, darkness, maxTrains, trainsOf, trainCost } from './sim.js';
 import { cam, view, look, pickTile, pickThing, toWorld, isoX, isoY, coasterThumb, objCenter } from './render.js';
@@ -21,7 +23,7 @@ import { burst, floatText, confetti, fxHooks } from './fx.js';
 export const ui = {
   tool: 'inspect', item: null, rot: 0, ghost: null, sel: null, editing: 0, follow: 0, followPos: null,
   pending: null, slope: 0, chain: false, bank: false, wide: false, camTarget: null, touch: false, hooks: {},
-  cands: null, hot: null, handle: null, area: null, undo: null,
+  cands: null, hot: null, handle: null, area: null, undo: null, pick: null,
 };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -440,7 +442,7 @@ export function enterEditor(id) {
   const c = S.objs[id];
   if (!c) return;
   ui.editing = id; ui.tool = 'inspect'; ui.item = null; ui.ghost = null; ui.pending = null; ui.handle = null; ui.area = null;
-  ui.slope = 0; ui.chain = false; ui.bank = false; ui.wide = false; ui.follow = 0;
+  ui.slope = 0; ui.chain = false; ui.bank = false; ui.wide = false; ui.follow = 0; ui.pick = null;
   clearUndo();
   c.open = false;
   closePanel(); markTool(); showConfirm();
@@ -450,7 +452,7 @@ export function enterEditor(id) {
 }
 export function exitEditor(silent) {
   const c = S.objs[ui.editing];
-  ui.editing = 0; ui.follow = 0; ui.cands = null; ui.hot = null;
+  ui.editing = 0; ui.follow = 0; ui.cands = null; ui.hot = null; ui.pick = null;
   els.tools.hidden = false; els.builder.hidden = true; els.testhud.hidden = true;
   if (c && !silent) {
     if (c.st === 'test') { c.st = 'idle'; c.runT = 0; }
@@ -478,6 +480,7 @@ function buildBuilder() {
   els.builder.innerHTML = `
     <div class="b-head"><b>${esc(objName(c))}</b><span data-k="info"></span></div>
     <div class="b-status" data-k="status"></div>
+    <div class="b-pick" hidden><b data-k="pickname"></b>${btn('p-chain', 'b_chain', 'chain')}${btn('p-bank', 'b_bank', 'bank')}${btn('p-s', 'b_plain', 'slope_f')}${btn('p-brake', 'b_brake', 'brake')}${btn('p-boost', 'b_boost', 'boost')}${btn('p-cut', 'b_cut', 'cut')}${btn('p-x', 'close', 'close')}</div>
     <div class="b-rows">
       <div class="grp g-slope">${slopes}</div>
       <div class="grp g-dir">${btn('l', 'b_left', 'turn_l', 'big', '←')}${btn('s', 'b_straight', 'straight', 'big', '↑')}${btn('r', 'b_right', 'turn_r', 'big', '→')}</div>
@@ -487,6 +490,7 @@ function buildBuilder() {
     </div>`;
   refreshBuilder();
 }
+const PIECE_NAME = { s: 'b_straight', l: 'b_left', r: 'b_right', wl: 'b_left', wr: 'b_right', loop: 'b_loop', cork: 'b_cork', boost: 'b_boost', brake: 'b_brake' };
 function ratingLine(c) {
   return `${t('excitement')} ${num(c.E, 1)} · ${t('intensity')} ${num(c.I, 1)} · ${t('nausea')} ${num(c.Q, 1)}`;
 }
@@ -543,9 +547,26 @@ function refreshBuilder() {
   if (!sim.ok) { txt = t('stuck'); cls += ' bad'; }
   else if (c.closed) { txt = t('b_complete') + ' ' + ratingLine(c) + (c.I > 9 ? ' — ' + t('too_intense') : ''); cls += c.I > 9 ? ' bad' : ' good'; }
   else if (c.pieces.length <= 3) txt = t(COASTERS[c.ctype].launch ? 'b_hint_launch' : 'b_hint');
+  if (c.closed && sim.ok && c.I <= 9 && ui.pick === null) txt += ' ' + t('b_pickhint');
   if (st.textContent !== txt) st.textContent = txt;
   if (st.className !== cls) st.className = cls;
-  for (const b of els.builder.querySelectorAll('button[data-b]')) {
+  // the piece that was tapped on the map, and what can be done to it
+  if (ui.pick !== null && !c.pieces[ui.pick]) ui.pick = null;
+  const al = ui.pick !== null ? alterable(c, ui.pick) : null, pk = els.builder.querySelector('.b-pick');
+  if (!al) ui.pick = null;
+  pk.hidden = !al;
+  if (al) {
+    const pp = c.pieces[ui.pick], nm = t('b_piece', ui.pick - 2) + ': ' + t(PIECE_NAME[pp.t] || 'b_straight');
+    if (q('pickname').textContent !== nm) q('pickname').textContent = nm;
+    const show = { 'p-chain': al.chain, 'p-bank': al.bank, 'p-s': al.kind && pp.t !== 's', 'p-brake': al.kind && pp.t !== 'brake', 'p-boost': al.kind && al.boost && pp.t !== 'boost', 'p-cut': ui.pick < c.pieces.length - 1 };
+    for (const b of pk.querySelectorAll('button[data-b]')) {
+      const a = b.dataset.b;
+      if (a in show) b.hidden = !show[a];
+      if (a === 'p-chain') b.classList.toggle('on', !!pp.chain);
+      if (a === 'p-bank') b.classList.toggle('on', !!pp.bank);
+    }
+  }
+  for (const b of els.builder.querySelectorAll('.b-rows button[data-b]')) {
     const a = b.dataset.b;
     if (a.startsWith('slope')) b.classList.toggle('on', +a.slice(5) === ui.slope);
     else if (a === 'chain') b.classList.toggle('on', ui.chain);
@@ -589,10 +610,16 @@ function builderAct(a) {
   } else if (a === 'undo') { if (c.pieces.length > 3 && c.st !== 'test') r = undoPiece(c); }
   else if (a === 'auto') { if (!c.closed) r = autoFinish(c); }
   else if (a === 'test') { if (startTest(c)) { ui.follow = c.id; els.testhud.hidden = false; sfx('whoosh'); } }
+  else if (a === 'p-x') { ui.pick = null; sfx('click'); }
+  else if (a.startsWith('p-') && ui.pick !== null) {
+    if (a === 'p-cut') { r = cutAfter(c, ui.pick); if (r.ok) ui.pick = null; }
+    else r = alterPiece(c, ui.pick, a.slice(2));
+    if (r.ok) { sfx(a === 'p-cut' ? 'remove' : 'track'); r = null; if (a === 'p-cut') focusEnd(c); }
+  }
   else if (a === 'done') { sfx('click'); exitEditor(); return; }
   if (r) {
     if (r.ok) {
-      sfx(a === 'undo' ? 'remove' : 'track'); focusEnd(c);
+      sfx(a === 'undo' ? 'remove' : 'track'); focusEnd(c); ui.pick = null;
       if (a !== 'undo') { const e = endState(c); burst(isoX(e.x + 0.5 - DX[e.d] * 0.5, e.y + 0.5 - DY[e.d] * 0.5), isoY(e.x + 0.5 - DX[e.d] * 0.5, e.y + 0.5 - DY[e.d] * 0.5, e.h + 0.3), 'spark', 5); }
     } else fail(r);
   }
@@ -1071,8 +1098,24 @@ function zoomAt(px, py, factor) {
   cam.y = wy - (py - view.h / 2) / cam.zoom;
   clampCam();
 }
+/** The piece of the coaster being edited that lies under a screen point, or null. */
+function pieceAt(px, py) {
+  const c = S.objs[ui.editing];
+  if (!c || !c.sim) return null;
+  const [wx, wy] = toWorld(px, py), sm = c.sim;
+  let best = null, bd = (ui.touch ? 22 : 14) / cam.zoom;
+  for (let k = 0; k < sm.n; k++) {
+    const d = Math.hypot(isoX(sm.X[k], sm.Y[k]) - wx, isoY(sm.X[k], sm.Y[k], sm.Z[k] + 0.3) - wy);
+    if (d < bd) { bd = d; best = sm.PI[k]; }
+  }
+  return best !== null && c.pieces[best].t !== 'station' ? best : null;
+}
 function tap(px, py, touch) {
-  if (ui.editing) return;
+  if (ui.editing) {
+    const pi = pieceAt(px, py);
+    if (pi !== ui.pick) { ui.pick = pi; sfx('click'); refreshBuilder(); }
+    return;
+  }
   const tile = pickTile(px, py);
   if (ui.tool === 'inspect') {
     const th = pickThing(px, py);

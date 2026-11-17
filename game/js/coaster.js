@@ -201,6 +201,44 @@ function kickOut(c) {
   c.queue = []; c.riders = []; c.runs = []; c.st = 'idle';
 }
 
+/** What can be changed on piece i without moving the track: {chain, bank, kind}. */
+export function alterable(c, i) {
+  const p = c.pieces[i], T = COASTERS[c.ctype];
+  if (!p || p.t === 'station') return null;
+  const flat = p.h0 === p.h1;
+  return {
+    chain: (p.t === 's' || isTurn(p)) && p.h1 >= p.h0 && !T.launch,
+    bank: isTurn(p) && T.bank,
+    kind: flat && (p.t === 's' || p.t === 'brake' || p.t === 'boost'),
+    boost: flat && !!S.unlocked.booster && c.ctype !== 'mini',
+  };
+}
+/** Change a piece that is already built. what: 'chain' or 'bank' (switch on or off), or 's' / 'brake' / 'boost'. */
+export function alterPiece(c, i, what) {
+  const a = alterable(c, i), p = c.pieces[i];
+  if (!a) return no('e_station');
+  const old = { t: p.t, chain: p.chain, bank: p.bank };
+  if (what === 'chain' && a.chain) p.chain = !p.chain;
+  else if (what === 'bank' && a.bank) p.bank = !p.bank;
+  else if ((what === 's' || what === 'brake' || (what === 'boost' && a.boost)) && a.kind) { p.t = what; p.chain = false; }
+  else return no(what === 'boost' ? 'e_locked' : 'e_cannot');
+  const cost = pieceCost(c, p), diff = cost - (p.cost || 0);
+  if (diff > 0 && !canAfford(diff)) { Object.assign(p, old); return no('e_money'); }
+  if (diff > 0) spend(diff, 'build'); else if (diff < 0) earn(-diff, 'build');
+  p.cost = cost; c.cost += diff;
+  for (const q of c.pieces) q.geo = null;
+  S.pv++;
+  recompute(c);
+  return OK;
+}
+/** Take away every piece after piece i, so the track can be built again from there. */
+export function cutAfter(c, i) {
+  if (i < 2 || i >= c.pieces.length - 1) return no('e_cannot');
+  while (c.pieces.length > i + 1) popPiece(c);
+  afterEdit(c);
+  return OK;
+}
+
 /** Finds the shortest way back to the station and builds it, with brakes first if the train is fast. */
 export function autoFinish(c) {
   if (c.closed) return no('e_closed');

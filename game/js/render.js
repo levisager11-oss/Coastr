@@ -762,6 +762,23 @@ function drawOverlays(ctx, time, ui) {
     ctx.beginPath(); ctx.arc(cx, cy, 6 * s, 0, 6.3); ctx.fill(); ctx.stroke();
   }
   // coaster editor: where the next piece goes
+  if (ui.editing && ui.pick !== null && ui.pick !== undefined) {
+    // the piece picked for changing glows white
+    const c = S.objs[ui.editing], sm = c && c.sim;
+    if (sm) {
+      ctx.strokeStyle = `rgba(255,255,255,${0.55 + 0.35 * pulse})`; ctx.lineWidth = 9; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.beginPath();
+      let pen = false;
+      for (let k = 0; k <= sm.n; k++) {
+        const q = k % sm.n;
+        if (sm.PI[q] !== ui.pick && !(pen && sm.PI[(k - 1 + sm.n) % sm.n] === ui.pick && (k < sm.n || c.closed))) { pen = false; continue; }
+        const x = isoX(sm.X[q], sm.Y[q]), y = isoY(sm.X[q], sm.Y[q], sm.Z[q] + 0.3);
+        if (pen) ctx.lineTo(x, y); else { ctx.moveTo(x, y); pen = true; }
+        if (sm.PI[q] !== ui.pick) pen = false;
+      }
+      ctx.stroke();
+    }
+  }
   if (ui.editing) {
     const c = S.objs[ui.editing];
     if (c && !c.closed) {
