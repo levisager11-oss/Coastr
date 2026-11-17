@@ -16,6 +16,7 @@ body {
 [hidden] { display: none !important; }
 canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
 canvas#c.build { cursor: crosshair; }
+canvas#c.point { cursor: pointer; }
 button { font: inherit; color: inherit; border: 0; background: none; padding: 0; margin: 0; cursor: pointer; touch-action: manipulation; }
 button:disabled { cursor: default; }
 svg { display: block; }
@@ -28,6 +29,8 @@ svg { display: block; }
 .pill { padding: 0 10px; font-size: 14px; }
 .pill svg { width: 17px; height: 17px; flex: none; }
 .pill.quiet { color: var(--soft); font-size: 12.5px; }
+#st-date i { display: flex; }
+#st-date svg { width: 18px; height: 18px; }
 .pill b { font-weight: 800; font-variant-numeric: tabular-nums; }
 .btn { padding: 0 12px; font-weight: 800; transition: transform 0.06s; }
 .btn:active:not(:disabled) { transform: translateY(2px); }
@@ -102,9 +105,13 @@ svg { display: block; }
 #tray { background: var(--card); border-radius: 16px; box-shadow: var(--shadow); padding: 6px; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: thin; }
 #tray .card { flex: none; width: 84px; border-radius: 12px; padding: 4px 3px 5px; display: flex; flex-direction: column; align-items: center; gap: 1px; background: #f3f5fa; position: relative; }
 #tray .card canvas { width: 64px; height: 50px; }
-#tray .card .nm { font-size: 11px; text-align: center; line-height: 1.15; min-height: 2.3em; display: flex; align-items: center; white-space: normal; }
+#tray .card .nm { font-size: 11px; text-align: center; line-height: 1.15; min-height: 2.3em; display: flex; align-items: center; justify-content: center; white-space: normal; max-width: 100%; overflow-wrap: anywhere; hyphens: auto; }
 #tray .card .pr { font-size: 11.5px; color: #05805f; font-weight: 800; }
 #tray .card.on { background: var(--yellow); }
+#tray .card.design { background: #eaf3ff; }
+#tray .card.design.on { background: var(--yellow); }
+#tray .card .del { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 7px; background: rgba(43, 45, 66, 0.75); color: #fff; display: flex; align-items: center; justify-content: center; }
+#tray .card .del svg { width: 10px; height: 10px; }
 #tray .card.locked canvas { filter: grayscale(1); opacity: 0.45; }
 #tray .card.locked .pr { color: var(--soft); display: flex; align-items: center; gap: 3px; }
 #tray .card.locked .pr svg { width: 11px; height: 11px; }
@@ -114,17 +121,35 @@ svg { display: block; }
 #confirm .btn { min-height: 46px; padding: 0 16px; font-size: 15px; }
 #confirm .btn svg { width: 20px; height: 20px; }
 
-#builder { background: var(--card); border-radius: 16px; box-shadow: var(--shadow); padding: 8px; width: 760px; }
-#builder .b-head { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; margin-bottom: 6px; padding: 0 2px; }
+#info {
+  background: rgba(43, 45, 66, 0.86); color: #fff; border-radius: 10px; padding: 4px 10px; font-size: 12px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none !important;
+}
+#undo {
+  position: fixed; z-index: 6; left: calc(8px + var(--sl)); bottom: calc(var(--bh) + 8px); min-height: 40px; padding: 0 12px;
+  background: var(--ink); color: #fff; animation: pop 0.18s ease-out;
+}
+#undo svg { width: 18px; height: 18px; }
+
+#builder { background: var(--card); border-radius: 16px; box-shadow: var(--shadow); padding: 8px; }
+#builder .b-head { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; margin-bottom: 4px; padding: 0 2px; }
 #builder .b-head b { font-size: 14.5px; }
 #builder .b-head span { color: var(--soft); font-size: 12.5px; font-weight: 600; }
-#builder .b-status { font-size: 12.5px; padding: 0 2px 6px; font-weight: 700; }
+#builder .b-status { font-size: 12.5px; padding: 0 2px 6px; font-weight: 700; color: var(--soft); min-height: 1.3em; }
 #builder .b-status.bad { color: #d63a5f; }
 #builder .b-status.good { color: #05805f; }
+#builder .b-pick { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; background: #fff6cf; border-radius: 12px; padding: 4px 4px 4px 10px; margin-bottom: 6px; }
+#builder .b-pick b { font-size: 12.5px; margin-right: auto; }
+#builder .b-pick button { height: 36px; border-radius: 10px; display: flex; align-items: center; gap: 4px; padding: 0 9px; font-size: 11.5px; background: #fff; box-shadow: 0 1px 0 rgba(43, 45, 66, 0.12); }
+#builder .b-pick button svg { width: 18px; height: 18px; flex: none; }
+#builder .b-pick button.on { background: var(--ink); color: #fff; }
+#builder .b-pick button[data-b="p-x"] span { display: none; }
 #builder .b-rows { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
 #builder .grp { display: flex; gap: 4px; background: #eef1f7; border-radius: 12px; padding: 3px; }
+#builder .grp:empty { display: none; }
 #builder .grp button { min-width: 46px; height: 46px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 5px; font-size: 10px; color: var(--ink); background: #fff; gap: 1px; box-shadow: 0 1px 0 rgba(43, 45, 66, 0.12); }
-#builder .grp button svg { width: 22px; height: 22px; }
+#builder .grp button span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#builder .grp button svg { width: 22px; height: 22px; flex: none; }
 #builder .grp button.on { background: var(--ink); color: #fff; }
 #builder .grp button.big { min-width: 58px; background: var(--yellow); }
 #builder .grp button.act { min-width: 58px; }
@@ -155,7 +180,7 @@ svg { display: block; }
 .note { font-size: 12.5px; background: #eef7ff; color: #24597f; border-radius: 10px; padding: 8px 10px; font-weight: 600; }
 .switch { min-width: 84px; height: 36px; border-radius: 10px; background: #eef1f7; color: var(--soft); padding: 0 12px; font-weight: 800; }
 .switch.on { background: var(--green); color: #063; }
-.meter { display: grid; grid-template-columns: 84px 1fr 78px; align-items: center; gap: 8px; font-size: 12.5px; }
+.meter { display: grid; grid-template-columns: 84px 1fr 86px; align-items: center; gap: 8px; font-size: 12.5px; }
 .meter > span { color: var(--soft); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .meter .bar { height: 10px; border-radius: 6px; background: #e8ebf3; overflow: hidden; }
 .meter .bar i { display: block; height: 100%; border-radius: 6px; background: var(--blue); width: 0; transition: width 0.3s; }
@@ -167,6 +192,16 @@ svg { display: block; }
 .btns .btn { flex: 1 1 auto; min-height: 40px; }
 .list { display: flex; flex-direction: column; gap: 5px; margin: 0; padding: 0; list-style: none; font-weight: 600; font-size: 13px; }
 .list li { background: #f3f5fa; border-radius: 10px; padding: 7px 9px; display: flex; gap: 8px; align-items: flex-start; }
+.minimap { width: 100%; height: auto; border-radius: 12px; display: block; cursor: pointer; touch-action: none; }
+.list.rides li { cursor: pointer; align-items: center; padding: 8px 9px; }
+.list.rides li:active { background: var(--line); }
+.list.rides .nm2 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list.rides .cnt { margin-left: 0; display: inline-flex; align-items: center; gap: 2px; font-variant-numeric: tabular-nums; }
+.list.rides .cnt svg { width: 12px; height: 12px; }
+.list.rides .cnt.inc { color: #05805f; min-width: 52px; justify-content: flex-end; }
+.dot { flex: none; width: 16px; height: 16px; border-radius: 50%; background: var(--green); color: #fff; font-size: 11px; font-weight: 900; display: flex; align-items: center; justify-content: center; }
+.dot.bad { background: var(--red); }
+.dot.off { background: #aeb4c6; }
 .list li.done { color: var(--soft); }
 .list li.now { background: #fff6cf; }
 .list li .ck { flex: none; width: 18px; height: 18px; border-radius: 6px; background: #dfe3ee; display: flex; align-items: center; justify-content: center; color: #fff; margin-top: 1px; }
@@ -181,6 +216,16 @@ table.fin td:first-child, table.fin th:first-child { text-align: left; color: va
 table.fin tr.sum td { border-top: 2px solid var(--line); padding-top: 5px; color: var(--ink); }
 table.fin .neg { color: #d63a5f; }
 table.fin .pos { color: #05805f; }
+.swatches { display: flex; gap: 6px; flex-wrap: wrap; }
+.swatches button { width: 26px; height: 26px; border-radius: 9px; border: 3px solid #fff; box-shadow: 0 0 0 1px var(--line); }
+.swatches button.on { box-shadow: 0 0 0 3px var(--ink); }
+.stars { display: inline-flex; gap: 1px; }
+.stars span svg { width: 17px; height: 17px; }
+.stars span:not(.got) { filter: grayscale(1); opacity: 0.42; }
+.stars.big { justify-content: center; }
+.stars.big span svg { width: 30px; height: 30px; }
+.list li .cnt.st svg { width: 16px; height: 16px; }
+.list li .cnt.st:not(.got) { filter: grayscale(1); opacity: 0.35; }
 .choice { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
 .choice button { height: 38px; border-radius: 10px; background: #eef1f7; font-size: 12.5px; }
 .choice button.on { background: var(--ink); color: #fff; }
@@ -206,6 +251,17 @@ table.fin .pos { color: #05805f; }
 .m-btn span { color: var(--soft); font-size: 12.5px; font-weight: 600; white-space: normal; }
 .m-btn.main { background: var(--yellow); }
 .m-btn.main span { color: #6b5600; }
+.m-scs { display: grid; grid-template-columns: 1fr; gap: 8px; }
+.m-sc { background: var(--card); border-radius: 14px; box-shadow: var(--shadow); padding: 6px 10px 6px 6px; text-align: left; display: grid; grid-template-columns: 84px minmax(0, 1fr) auto; gap: 10px; align-items: center; transition: transform 0.06s; }
+.m-sc:active { transform: translateY(2px); }
+.m-sc > i { width: 84px; height: 52px; border-radius: 10px; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #eef1f7; color: var(--purple); }
+.m-sc > i canvas { width: 100%; height: 100%; display: block; }
+.m-sc > i svg { width: 26px; height: 26px; }
+.m-sc b { display: block; font-size: 15.5px; font-weight: 800; }
+.m-sc div > span { color: var(--soft); font-size: 12px; font-weight: 600; white-space: normal; display: flex; align-items: center; gap: 4px; line-height: 1.2; }
+.m-sc div > span svg { width: 12px; height: 12px; flex: none; }
+.m-sc.locked > i canvas { filter: grayscale(1); opacity: 0.6; }
+.m-sc.locked b { color: var(--soft); }
 .m-row { display: flex; gap: 8px; }
 .m-row .btn { flex: 1; min-height: 44px; }
 .m-row .btn svg { width: 18px; height: 18px; }
@@ -248,11 +304,18 @@ table.fin .pos { color: #05805f; }
   #b-open { order: 9; margin-left: auto; } #speed { order: 10; }
   #tray .card { width: 76px; }
   #tray .card canvas { width: 56px; height: 44px; }
-  #builder .grp button { min-width: 40px; height: 44px; padding: 0 3px; }
-  #builder .grp button.big { min-width: 52px; }
-  #builder .grp button.act { min-width: 0; flex: 1; }
-  #builder .grp.wide { width: 100%; }
-  #builder .grp.wide button { flex: 1; }
+  /* the builder is one tidy grid here: slopes and directions as plain arrows, then the extras with
+     their names, then the four actions */
+  #builder .b-rows { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 4px; background: #eef1f7; border-radius: 12px; padding: 4px; }
+  #builder .grp { display: contents; }
+  #builder .grp button, #builder .grp button.big, #builder .grp button.act { min-width: 0; height: 42px; padding: 0 2px; font-size: 9.5px; }
+  #builder .g-slope button span, #builder .g-dir button span { display: none; }
+  #builder .g-slope button svg, #builder .g-dir button svg { width: 24px; height: 24px; }
+  #builder .g-opt button, #builder .g-spec button, #builder .g-act button { grid-column: span 2; }
+  /* a coaster with few kinds of piece gets a grid of six */
+  #builder.few .b-rows { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  #builder.few .g-act button[data-b="undo"], #builder.few .g-act button[data-b="done"] { grid-column: span 1; }
+  #info { max-width: 100%; white-space: normal; text-align: center; }
 }
 @media (max-width: 400px) {
   #st-date { display: none; }
@@ -288,7 +351,7 @@ table.fin .pos { color: #05805f; }
   #tools button span { display: none; }
   #tools button canvas, #tools button svg { width: 28px; height: 24px; }
   #tray { padding: 4px; gap: 4px; }
-  #tray .card { width: 70px; padding: 2px 2px 3px; }
+  #tray .card { width: 88px; padding: 2px 2px 3px; }
   #tray .card canvas { width: 44px; height: 34px; }
   #tray .card .nm { min-height: 0; font-size: 9.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; max-width: 100%; }
   #tray .card .pr { font-size: 10.5px; }
@@ -306,11 +369,33 @@ table.fin .pos { color: #05805f; }
   #builder .b-head span, #builder .b-status { font-size: 11px; }
   #builder .b-status { padding-bottom: 2px; }
   #builder .b-rows { gap: 3px; }
-  #builder .grp { padding: 2px; gap: 2px; }
-  #builder .grp button { height: 30px; min-width: 30px; padding: 0 2px; }
+  #builder .b-rows, #builder.few .b-rows { grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 3px; padding: 3px; }
+  #builder .grp button, #builder .grp button.big, #builder .grp button.act { height: 30px; }
   #builder .grp button span { display: none; }
-  #builder .grp button svg { width: 18px; height: 18px; }
-  #builder .grp button.big { min-width: 40px; }
+  #builder .grp button svg, #builder .g-slope button svg, #builder .g-dir button svg { width: 18px; height: 18px; }
+  /* two rows of icons: undo and done join the first one */
+  #builder .g-opt button, #builder .g-spec button, #builder .g-act button,
+  #builder.few .g-act button[data-b="undo"], #builder.few .g-act button[data-b="done"] { grid-column: auto; }
+  #builder .g-slope button, #builder .g-dir button { order: 1; }
+  #builder .g-act button { order: 4; }
+  #builder .g-act button[data-b="undo"], #builder .g-act button[data-b="done"] { order: 2; }
+  #builder .g-opt button, #builder .g-spec button { order: 3; }
+  #builder .b-status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 0; }
+  #builder .b-status:empty { display: none; }
+  #info { display: none; }
+  #undo { min-height: 30px; }
+  #builder .b-pick { padding: 2px 2px 2px 8px; margin-bottom: 3px; gap: 3px; }
+  #builder .b-pick b { font-size: 11px; }
+  #builder .b-pick button { height: 26px; padding: 0 6px; }
+  #builder .b-pick button span { display: none; }
+  .m-scs { grid-template-columns: 1fr 1fr; gap: 6px; }
+  .m-sc { grid-template-columns: 40px minmax(0, 1fr); padding: 4px 5px 4px 4px; gap: 5px; border-radius: 10px; }
+  .m-sc > i { width: 40px; height: 28px; border-radius: 7px; }
+  .m-sc b { font-size: 11.5px; }
+  .m-sc div > span { display: none; }
+  .m-sc.locked div > span { display: flex; font-size: 10.5px; }
+  .m-sc .stars { grid-column: 2; margin-top: -4px; }
+  .m-sc .stars span svg { width: 12px; height: 12px; }
   .m-card { gap: 6px; }
   .m-head, .m-list { gap: 6px; }
   .logo { font-size: 46px; -webkit-text-stroke-width: 2px; text-shadow: 0 4px 0 var(--ink); }
@@ -324,18 +409,30 @@ table.fin .pos { color: #05805f; }
 /* short landscape screens (phones held sideways): tools sit in the bottom-left corner, menus run along the bottom */
 @media (max-height: 480px) and (min-width: 561px) {
   #bottom { flex-direction: row; align-items: flex-end; justify-content: flex-start; gap: 6px; }
-  #tools { order: 0; flex: none; grid-template-columns: repeat(2, 60px); }
+  #tools { order: 0; flex: none; grid-template-columns: repeat(2, 72px); }
+  /* tips and messages sit beside the tools, not over them */
+  #notes { left: calc(168px + var(--sl)); }
   #tools button { padding: 3px 1px 2px; }
   #tools button canvas, #tools button svg { width: 28px; height: 23px; }
   #tools button span { font-size: 9.5px; }
   #tray { order: 1; flex: 0 1 auto; min-width: 0; }
   #builder { order: 1; flex: 1 1 auto; min-width: 0; }
   #confirm { position: fixed; right: calc(8px + var(--sr)); top: calc(var(--th) + 8px); z-index: 9; }
-  #tray .card { width: 92px; padding: 3px; }
+  #tray .card { width: 100px; padding: 3px; }
   #tray .card canvas { width: 50px; height: 38px; }
-  #tray .card .nm { min-height: 0; font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; max-width: 100%; }
-  .m-card { max-width: 720px; flex-direction: row; align-items: center; gap: 18px; }
-  .m-head, .m-list { flex: 1; min-width: 0; }
+  #tray .card .nm { min-height: 0; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; max-width: 100%; }
+  .m-card { max-width: 780px; flex-direction: row; align-items: center; gap: 18px; }
+  .m-head { flex: 0.8; min-width: 0; }
+  .m-list { flex: 1.3; min-width: 0; }
+  .m-scs { grid-template-columns: 1fr 1fr; gap: 6px; }
+  .m-sc { grid-template-columns: 54px minmax(0, 1fr); padding: 4px 8px 4px 4px; gap: 7px; }
+  .m-sc > i { width: 54px; height: 36px; }
+  .m-sc b { font-size: 13.5px; }
+  .m-sc div > span { display: none; }
+  .m-sc.locked div > span { display: flex; font-size: 11px; }
+  .m-sc .stars { grid-column: 2; margin-top: -4px; }
+  .m-sc .stars span svg { width: 13px; height: 13px; }
+  #info { display: none; }
   .logo { font-size: clamp(48px, 9vw, 72px); }
   .m-btn { padding: 8px 14px; }
   .m-btn b { font-size: 16px; }
@@ -343,13 +440,18 @@ table.fin .pos { color: #05805f; }
   .m-row .btn { min-height: 38px; }
   #panel { top: calc(var(--th) + 10px); bottom: auto; left: auto; width: 290px; max-height: calc(100% - var(--th) - 16px); z-index: 8; }
   #builder { padding: 5px 8px; width: auto; }
-  #builder .b-head { margin-bottom: 3px; }
-  #builder .b-status { padding-bottom: 3px; }
-  #builder .b-rows { gap: 4px; }
-  #builder .grp button { height: 38px; min-width: 38px; }
+  #builder .b-head { margin-bottom: 2px; }
+  #builder .b-status { padding-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 0; }
+  #builder .b-status:empty { display: none; }
+  #builder .b-rows { gap: 4px; justify-content: flex-start; }
+  #builder .grp { padding: 2px; gap: 2px; }
+  #builder .grp button { height: 34px; min-width: 34px; padding: 0 3px; }
   #builder .grp button svg { width: 18px; height: 18px; }
-  #builder .grp button span { font-size: 9px; }
-  #builder .grp button.big, #builder .grp button.act { min-width: 46px; }
+  #builder .grp button span { display: none; }
+  #builder .grp button.big, #builder .grp button.act { min-width: 40px; }
+  #builder .b-pick { padding: 2px 2px 2px 8px; margin-bottom: 3px; }
+  #builder .b-pick button { height: 30px; padding: 0 7px; }
+  #builder .b-pick button span { display: none; }
   #tutorial { max-width: 330px; font-size: 12.5px; padding: 8px 10px; }
   #st-date { display: none; }
   .dialog { padding: 12px; }

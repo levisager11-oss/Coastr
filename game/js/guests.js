@@ -1,6 +1,6 @@
 // Guests: walking, needs, choosing rides, buying things, thoughts.
 import { N, DX, DY, RIDES, STALLS, SCN } from './data.js';
-import { S, idx, inB, accessTiles, earn } from './world.js';
+import { S, idx, inB, accessTiles, earn, walkH } from './world.js';
 
 const FIRST = ['Mia', 'Noah', 'Emma', 'Leon', 'Lina', 'Finn', 'Sofia', 'Luca', 'Hanna', 'Ben', 'Lea', 'Elias', 'Nora',
   'Jonas', 'Ella', 'Paul', 'Maya', 'Tim', 'Zoe', 'Max', 'Ida', 'Liam', 'Anna', 'Felix', 'Clara', 'Omar', 'Yuki', 'Ravi',
@@ -20,12 +20,12 @@ function bfs(sources) {
   while (q.length) {
     const next = [];
     for (const i of q) {
-      const x = i % N, y = (i / N) | 0, d = f[i] + 1, h = S.h[i];
+      const x = i % N, y = (i / N) | 0, d = f[i] + 1, h = walkH(i);
       for (let k = 0; k < 4; k++) {
         const nx = x + DX[k], ny = y + DY[k];
         if (!inB(nx, ny)) continue;
         const j = idx(nx, ny);
-        if (S.path[j] && f[j] < 0 && Math.abs(S.h[j] - h) <= 1) { f[j] = d; next.push(j); }
+        if (S.path[j] && f[j] < 0 && Math.abs(walkH(j) - h) <= 1) { f[j] = d; next.push(j); }
       }
     }
     q = next;
@@ -69,20 +69,66 @@ export function rideStats(o) {
   return RIDES[o.type];
 }
 export const rideWorth = (E) => 1.5 + E * 1.6;
+/**
+ * How much a ride pulls guests for its age: new rides are the talk of the park for half a year,
+ * and after three years they slowly lose their shine until they are renovated. 1 = normal.
+ */
+export function buzz(o) {
+  if (o.born === undefined) return 1;
+  const m = (S.time - o.born) / 60;
+  if (m < 6) return 1.3 - 0.05 * m;
+  if (m > 36) return Math.max(0.75, 1 - (m - 36) * 0.01);
+  return 1;
+}
 export function rideUsable(o) {
   if (!o.open) return false;
   if (o.kind === 'coaster') return o.closed && o.sim && o.sim.ok;
   return o.kind === 'ride';
 }
+// The queue line of a ride: queue-path tiles (kind 2) joined to its entrance, nearest first.
+let lines = new Map(), linesPv = -1;
+export function queueLine(o) {
+  if (linesPv !== S.pv) { lines = new Map(); linesPv = S.pv; }
+  let out = lines.get(o.id);
+  if (out) return out;
+  out = [];
+  const seen = new Set();
+  let q = accessTiles(o).filter((i) => S.path[i] === 2);
+  for (const i of q) seen.add(i);
+  while (q.length && out.length < 40) {
+    const next = [];
+    for (const i of q) {
+      out.push(i);
+      const x = i % N, y = (i / N) | 0;
+      for (let k = 0; k < 4; k++) {
+        const nx = x + DX[k], ny = y + DY[k];
+        if (!inB(nx, ny)) continue;
+        const j = idx(nx, ny);
+        if (S.path[j] === 2 && !seen.has(j) && Math.abs(walkH(j) - walkH(i)) <= 1) { seen.add(j); next.push(j); }
+      }
+    }
+    q = next;
+  }
+  lines.set(o.id, out);
+  return out;
+}
+/** How many guests may wait for a ride: a couple of loads, plus four for every tile of queue line. */
 export function queueMax(o) {
-  const cap = o.kind === 'coaster' ? o.capacity || 12 : RIDES[o.type].cap;
-  return cap * 2 + 4;
+  const cap = o.kind === 'coaster' ? (o.capacity || 12) * (o.trains || 1) : RIDES[o.type].cap;
+  return cap * 2 + 4 + queueLine(o).length * 4;
 }
 
 // ---------- guests ----------
+// the little picture that pops up over a guest's head with each kind of thought
+const EMOTE = {
+  th_great: 'smile', th_wow: 'star', th_sick: 'sick', th_expensive: 'money', th_wait: 'clock', th_nofood: 'need', th_nodrink: 'need',
+  th_notoilet: 'need', th_norides: 'bored', th_broke: 'money', th_unhappy: 'angry', th_tired: 'zzz', th_rest: 'zzz', th_yum: 'heart',
+  th_gift: 'heart', th_hat: 'heart', th_fire: 'star',
+};
 export function think(g, key, param) {
   if (g.cc > 0 && g.thoughts.length) return;
   g.cc = 6;
+  if (EMOTE[key]) { g.em = EMOTE[key]; g.emT = 2.4; }
   g.thoughts.unshift([key, param || '']);
   if (g.thoughts.length > 6) g.thoughts.pop();
   S.thoughts[key] = (S.thoughts[key] || 0) + 1;
@@ -98,19 +144,19 @@ export function makeGuest(tx, ty) {
     hunger: rnd(5, 45), thirst: rnd(5, 45), toilet: rnd(0, 35), nausea: 0, energy: rnd(75, 100),
     happy: rnd(60, 80), cash: rnd(60, 130), tol, sus: rnd(0.5, 1.5), stay: rnd(120, 240), tIn: 0,
     thoughts: [], rode: {}, rides: 0, shirt: pick(SHIRTS), skin: pick(SKINS), hair: pick(HAIRS),
-    gift: 0, walk: rnd(0, 6),
+    gift: 0, hat: 0, walk: rnd(0, 6), em: null, emT: 0,
   };
   return g;
 }
 
 function neighbors(tx, ty, out) {
   out.length = 0;
-  const h = S.h[idx(tx, ty)];
+  const h = walkH(idx(tx, ty));
   for (let k = 0; k < 4; k++) {
     const nx = tx + DX[k], ny = ty + DY[k];
     if (!inB(nx, ny)) continue;
     const j = idx(nx, ny);
-    if (S.path[j] && Math.abs(S.h[j] - h) <= 1) out.push(j);
+    if (S.path[j] && Math.abs(walkH(j) - h) <= 1) out.push(j);
   }
   return out;
 }
@@ -155,11 +201,13 @@ function chooseTarget(g, i) {
   if ((g.nausea > 55 || g.energy < 30) && reach('bench', i)) return { kind: 'bench' };
   if (g.nausea > 70) return null; // too queasy for rides, just walk it off
   if (g.cash > 15 && Math.random() < 0.05) {
-    const need = Math.random() < 0.5 && !g.gift ? 'gift' : 'treat';
+    const r = Math.random();
+    const need = r < 0.35 && !g.gift ? 'gift' : r < 0.65 && !g.hat ? 'hat' : 'treat';
     if (reach('cat:' + need, i)) return { kind: 'cat', need };
   }
   if (Math.random() < 0.15) return null;
   // pick a ride
+  const fans = S.event && S.event.id === 'fans';
   let total = 0, any = false;
   const opts = [];
   for (const id in S.objs) {
@@ -168,7 +216,7 @@ function chooseTarget(g, i) {
     any = true;
     if (!reach(String(o.id), i)) continue;
     const st = rideStats(o);
-    if (st.I > g.tol[1]) continue;
+    if (st.I > g.tol[1] + (fans ? 2 : 0)) continue;
     if (o.queue.length >= queueMax(o)) continue;
     if (o.price > rideWorth(st.E) * (0.85 + g.sus * 0.2)) {
       if (Math.random() < 0.3) { think(g, 'th_expensive', o.id); g.happy -= 1.5; }
@@ -176,6 +224,7 @@ function chooseTarget(g, i) {
     }
     if (o.price > g.cash) continue;
     let w = (0.5 + st.E) * (0.5 + st.E) / (1 + 2 * (g.rode[o.id] || 0));
+    w *= buzz(o) * (fans && o.kind === 'coaster' ? 1.6 : 1);
     if (st.I < g.tol[0]) w *= 0.3;
     opts.push([o.id, w]); total += w;
   }
@@ -197,7 +246,7 @@ function stallNextTo(tx, ty, need) {
   }
   return null;
 }
-const MAX_PAY = { hunger: 8, thirst: 6, treat: 6, gift: 12, toilet: 1 };
+const MAX_PAY = { hunger: 8, thirst: 6, treat: 6, gift: 12, hat: 14, toilet: 1 };
 
 function arrive(g) {
   const t = g.target;
@@ -217,10 +266,14 @@ function arrive(g) {
     }
     g.cash -= o.price; earn(o.price, 'stalls'); o.customers++; o.income += o.price;
     if (t.need === 'hunger') { g.hunger = Math.max(0, g.hunger - 75); g.thirst += 8; g.toilet += 8; g.happy += 5; think(g, 'th_yum'); }
-    else if (t.need === 'thirst') { g.thirst = Math.max(0, g.thirst - 80); g.toilet += 22; g.happy += 3; }
+    else if (t.need === 'thirst') {
+      g.thirst = Math.max(0, g.thirst - 80); g.toilet += 22; g.happy += 3;
+      if (o.type === 'coffee') g.energy = Math.min(100, g.energy + 30);
+    }
     else if (t.need === 'treat') { g.hunger = Math.max(0, g.hunger - 30); g.thirst = Math.max(0, g.thirst - 30); g.happy += 7; think(g, 'th_yum'); }
     else if (t.need === 'toilet') { g.toilet = 0; g.happy += 3; }
     else if (t.need === 'gift') { g.gift = 1 + ((Math.random() * 5) | 0); g.happy += 10; think(g, 'th_gift'); }
+    else if (t.need === 'hat') { g.hat = 1 + ((Math.random() * 5) | 0); g.happy += 8; think(g, 'th_hat'); }
     g.st = 'pause'; g.timer = rnd(1.5, 3);
     return;
   }
@@ -269,8 +322,9 @@ function decide(g) {
 
 export function updateGuest(g, dt) {
   g.tIn += dt; g.cc -= dt; g.cool -= dt;
+  if (g.emT > 0) g.emT -= dt;
   g.hunger = Math.min(100, g.hunger + 0.22 * dt);
-  g.thirst = Math.min(100, g.thirst + 0.28 * dt);
+  g.thirst = Math.min(100, g.thirst + (S.event && S.event.id === 'heat' ? 0.62 : 0.28) * dt);
   g.toilet = Math.min(100, g.toilet + 0.13 * dt);
   g.nausea = Math.max(0, g.nausea - 1.1 * dt);
   g.energy = Math.max(0, g.energy - 0.14 * dt);
@@ -283,7 +337,9 @@ export function updateGuest(g, dt) {
   if (g.st === 'queue') {
     g.wait += dt;
     if (g.wait > 25) g.happy -= 0.1 * dt;
-    if (g.wait > 70 && Math.random() < 0.01) {
+    const o0 = S.objs[g.obj];
+    // a proper queue line makes the wait easier to bear
+    if (g.wait > (o0 && queueLine(o0).length ? 115 : 70) && Math.random() < 0.01) {
       const o = S.objs[g.obj];
       if (o) o.queue = o.queue.filter((id) => id !== g.id);
       think(g, 'th_wait', g.obj); g.happy -= 4; g.obj = 0; g.st = 'walk'; g.cool = 5;
@@ -326,7 +382,7 @@ export function guestPos(g, out) {
   let x = fx + (bx - fx) * t, y = fy + (by - fy) * t;
   // keep a personal sideways offset so guests do not walk in single file
   x += g.off * 0.8; y -= g.off * 0.8;
-  const za = S.h[idx(g.tx, g.ty)], zb = S.h[idx(g.nx, g.ny)];
+  const za = walkH(idx(g.tx, g.ty)), zb = walkH(idx(g.nx, g.ny));
   out.x = x; out.y = y; out.z = g.st === 'walk' ? za + (zb - za) * t : zb;
   return out;
 }

@@ -1,19 +1,26 @@
 {
   "title": "Coastr",
   "slug": "coastr",
-  "description": "Build your own theme park! Lay paths, place rides and food stalls, and design roller coasters piece by piece with lift hills, steep drops, loops and boosters. Every coaster gets excitement, intensity and nausea ratings as soon as its track is complete, and you can send a test train round to watch it run. Keep your guests happy, set prices, research new rides and grow your park in career mode, or build freely in the sandbox.",
-  "description_de": "Bau deinen eigenen Freizeitpark! Leg Wege an, stell Attraktionen und Essensstände auf und entwirf Achterbahnen Stück für Stück mit Lifthügeln, steilen Abfahrten, Loopings und Boostern. Jede Bahn bekommt Wertungen für Spannung, Intensität und Übelkeit, sobald die Strecke fertig ist, und du kannst einen Testzug auf die Runde schicken. Halte deine Gäste bei Laune, leg Preise fest, erforsche neue Attraktionen und lass deinen Park in der Karriere wachsen, oder bau frei drauflos.",
-  "controls": "Mouse: drag to move the map, scroll to zoom, click to build. Touch: drag to move, pinch to zoom, tap to build (two fingers move the map while drawing paths). R turns a ride, Esc cancels, Space pauses.",
+  "description": "Build your own theme park! Lay paths, place rides and food stalls, and design roller coasters piece by piece with lift hills, steep drops, loops, corkscrews, wide banked turns and launches. Every coaster gets excitement, intensity and nausea ratings as soon as its track is complete, and you can follow the train round the track. Play four parks on very different maps (meadow, lagoon, desert and snowy mountain), earn stars, research new rides and watch your park light up at night. Or build freely in the sandbox.",
+  "description_de": "Bau deinen eigenen Freizeitpark! Leg Wege an, stell Attraktionen und Essensstände auf und entwirf Achterbahnen Stück für Stück mit Lifthügeln, steilen Abfahrten, Loopings, Schrauben, weiten Steilkurven und Katapultstarts. Jede Bahn bekommt Wertungen für Spannung, Intensität und Übelkeit, sobald die Strecke fertig ist, und du kannst dem Zug auf seiner Runde folgen. Spiel vier Parks auf ganz verschiedenen Karten (Wiese, Lagune, Wüste und Schneeberg), verdiene Sterne, erforsche neue Attraktionen und sieh zu, wie dein Park nachts leuchtet. Oder bau frei drauflos.",
+  "controls": "Mouse: drag to move the map, scroll to zoom, click to build, drag to build a line of path or a whole area. Touch: drag to move, pinch to zoom, tap to build, then drag from the white dot to draw a line. Coasters: tap the arrows on the map, or use the arrow keys; tap a piece of track to change it. R turns a ride, Ctrl+Z takes back the last thing built, Esc cancels, Space pauses.",
   "category": "strategy",
   "engine": "HTML5 Canvas (plain JavaScript)",
-  "version": "1.1",
-  "update_title": "Bigger park, better on phones",
+  "version": "2.0",
+  "update_title": "Four parks, new coasters, a whole new look",
   "notes": [
-    "The park is now much bigger: 60 by 60 tiles instead of 40 by 40, with a second lake and more hills",
-    "Parks saved before this update open on the bigger map, in the same place by the entrance",
-    "Fixed on phones: the settings and speed buttons no longer sit under Toki's close button in fullscreen",
-    "The game is now usable in the small view before you go fullscreen",
-    "You can zoom out further"
+    "Four parks to play instead of one: Green Meadows, Blue Lagoon, Sunny Dunes and Frost Peak, each with its own map, goals and three stars to earn. Your old career is now Green Meadows and keeps everything you built",
+    "Building coasters is much easier: tap the arrows on the map to lay track. Tap any piece of a finished track to give it a lift, banking, brakes or a booster, or to cut the track there and rebuild",
+    "New track pieces: wide turns, corkscrews, and a Launch Coaster that fires its train out of the station. Long coasters can run up to three trains",
+    "Six ready-made coasters to place in one go, from the Little Hopper to the Rocket Shot, and you can save your own designs and reuse them in any park",
+    "Tracks and trains are redrawn: timber trestles for wooden coasters, thick steel rails, shaped cars. You hear the lift clatter and the riders scream",
+    "Paths cross water as bridges, and queue lines in front of rides hold more waiting guests",
+    "Six new rides, three new stalls and eight new kinds of scenery",
+    "New art everywhere, day and night with lights, rain and snow, fireworks in the evening, guests who show what they think",
+    "More happens in a long game: school holidays, heat waves, coaster fans and a park critic visit; new rides draw crowds and old ones want renovating; awards at the end of each year",
+    "Drag to build a whole line of path or change a whole area of land, and take back your last step with Undo",
+    "Runs smoother on phones: the game adjusts its picture quality by itself",
+    "Tap the park rating for an overview map and a list of all your rides"
   ],
   "cover_image": "cover.png",
   "screenshots": [
@@ -146,11 +153,51 @@
     },
     {
       "id": "career-done",
-      "name": "Career complete",
-      "name_de": "Karriere geschafft",
-      "description": "Reach every goal in career mode.",
-      "description_de": "Erreiche alle Ziele der Karriere.",
+      "name": "Meadows complete",
+      "name_de": "Wiesen geschafft",
+      "description": "Reach every goal in Green Meadows.",
+      "description_de": "Erreiche alle Ziele in Grüne Wiesen.",
       "icon": "🏆"
+    },
+    {
+      "id": "star-1",
+      "name": "First star",
+      "name_de": "Erster Stern",
+      "description": "Earn your first star in any park.",
+      "description_de": "Verdiene deinen ersten Stern in einem Park.",
+      "icon": "🌟"
+    },
+    {
+      "id": "stars-6",
+      "name": "Star collector",
+      "name_de": "Sternesammler",
+      "description": "Earn 6 stars across all parks.",
+      "description_de": "Verdiene 6 Sterne in allen Parks zusammen.",
+      "icon": "✨"
+    },
+    {
+      "id": "stars-12",
+      "name": "Park legend",
+      "name_de": "Parklegende",
+      "description": "Earn all 12 stars.",
+      "description_de": "Verdiene alle 12 Sterne.",
+      "icon": "👑"
+    },
+    {
+      "id": "twisted",
+      "name": "Twisted",
+      "name_de": "Verdreht",
+      "description": "Open a coaster that turns upside down 3 times.",
+      "description_de": "Öffne eine Achterbahn, die 3 Mal kopfüber fährt.",
+      "icon": "🌪️"
+    },
+    {
+      "id": "speed-100",
+      "name": "Speed demon",
+      "name_de": "Tempoteufel",
+      "description": "Open a coaster that reaches 100 km/h.",
+      "description_de": "Öffne eine Achterbahn, die 100 km/h erreicht.",
+      "icon": "💨"
     }
   ]
 }
