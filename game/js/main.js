@@ -69,9 +69,24 @@ function achievement(id) {
   try { if (window.toki && window.toki.achievement) window.toki.achievement(id); } catch (e) { /* ignore */ }
 }
 
+// ---------- speed ----------
+// If frames take too long (a weak phone, a huge park) the picture is drawn a little less sharp and
+// with fewer small details, step by step, and goes back up when there is time to spare.
+const Q_SCALE = [1, 0.8, 0.65, 0.55];
+let avgMs = 16, slowT = 0, fastT = 0, holdT = 0, warmT = 3;
+function tuneQuality(sec) {
+  if (!look.auto) return;
+  if (warmT > 0) { warmT -= sec; return; }
+  avgMs += (Math.min(100, sec * 1000) - avgMs) * 0.05;
+  holdT -= sec;
+  if (avgMs > 27) { slowT += sec; fastT = 0; } else if (avgMs < 18.5) { fastT += sec; slowT = 0; } else { slowT = 0; fastT = 0; }
+  if (slowT > 2.5 && look.q < 3) { look.q++; slowT = 0; holdT = 45; resize(); }
+  else if (fastT > 10 && look.q > 0 && holdT <= 0) { look.q--; fastT = 0; holdT = 20; resize(); }
+}
+
 // ---------- screen ----------
 function resize() {
-  const w = window.innerWidth, h = window.innerHeight, dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = window.innerWidth, h = window.innerHeight, dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2) * Q_SCALE[look.q]);
   if (!w || !h) return;
   view.w = w; view.h = h; view.dpr = dpr;
   const cw = Math.round(w * dpr), ch = Math.round(h * dpr);
@@ -217,6 +232,7 @@ const hooks = {
 let last = performance.now(), uiAcc = 0, saveAcc = 0, driftT = 0;
 function frame(now) {
   const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
+  tuneQuality((now - last) / 1000);
   last = now;
   if (playing) {
     let sp = S.speed;
@@ -246,7 +262,7 @@ function frame(now) {
 }
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { saveGame(false); sendScores(); }
-  else last = performance.now();
+  else { last = performance.now(); warmT = 1.5; }
   suspend(document.hidden);
 });
 window.addEventListener('pagehide', () => { saveGame(false); sendScores(); });
@@ -261,4 +277,4 @@ buildDemo(); events.length = 0;
 demoView();
 buildMenu();
 requestAnimationFrame(frame);
-window.__coastr = { S, ui, cam, startGame, hooks, at: (x, y) => toScreen(isoX(x + 0.5, y + 0.5), isoY(x + 0.5, y + 0.5, S.h[idx(x, y)])) }; // handy for testing in the browser console
+window.__coastr = { S, ui, cam, look, startGame, hooks, at: (x, y) => toScreen(isoX(x + 0.5, y + 0.5), isoY(x + 0.5, y + 0.5, S.h[idx(x, y)])) }; // handy for testing in the browser console

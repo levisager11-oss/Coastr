@@ -1,5 +1,5 @@
 // Isometric renderer: backdrop, terrain, paths, scenery, rides, coasters, guests, light and overlays.
-import { N, DX, DY, RIDES, SCN, COASTERS } from './data.js';
+import { N, DX, DY, RIDES, SCN, SCENERY, COASTERS } from './data.js';
 import { S, idx, inB, accessTiles, walkH } from './world.js';
 import { posAt, trainDist, STATION_HEAD, CAR_LEN, endState, bankAt, corkAngle } from './coaster.js';
 import { guestPos, queueLine } from './guests.js';
@@ -15,7 +15,9 @@ const { drawRide, drawStall, drawScenery, setOrigin, RIDE_TOP } = SP;
 
 export const cam = { x: 0, y: 600, zoom: 1 };
 export const view = { w: 800, h: 600, dpr: 1 };
-export const look = { night: true }; // settings that only change the picture
+// Settings that only change the picture. q = 0 (everything) to 3 (plainest): main.js lowers it by
+// itself when frames take too long, unless auto is off.
+export const look = { night: true, q: 0, auto: true };
 const HW = 32, HH = 16, ZH = 16;
 const SEA = 0.4; // height of the ground around the park, in levels
 const FONT = 'ui-rounded, "Segoe UI", system-ui, sans-serif';
@@ -309,8 +311,9 @@ export function render(ctx, time, ui) {
   ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (w / 2 - cam.x * z), dpr * (h / 2 - cam.y * z));
   const wx0 = cam.x - w / 2 / z - 48, wx1 = cam.x + w / 2 / z + 48;
   const wy0 = cam.y - h / 2 / z - 48, wy1 = cam.y + h / 2 / z;
-  const detail = z >= 0.6, rain = fxWet() > 0.5;
-  fine = detail; setTrackDetail(detail);
+  const detail = z >= 0.6 && look.q < 2, rain = fxWet() > 0.5;
+  fine = z >= 0.6 && look.q < 3; setTrackDetail(fine);
+  const stamp = (look.q >= 1 || z < 1) && z * dpr <= 2.2; // still scenery may be drawn from ready-made pictures
   lights.length = 0; emotes.length = 0;
 
   // dynamic things go into per-tile buckets so they sort with the scenery
@@ -397,7 +400,7 @@ export function render(ctx, time, ui) {
       drawTile(ctx, TH, x, y, i, he, sx, sy, time, detail);
       const sc = S.scn[i];
       if (sc) {
-        drawScenery(ctx, sc, sx, sy + HH, time, hash(x, y));
+        if (stamp && STILL[sc]) stampScenery(ctx, sc, sx, sy + HH, hash(x, y)); else drawScenery(ctx, sc, sx, sy + HH, time, hash(x, y));
         if (dark > 0.05 && (sc === SCN.lamp || sc === SCN.torch)) lights.push(sx, sy + HH - 30, sc === SCN.lamp ? 78 : 58 + Math.sin(time * 9 + x) * 5, 0);
       }
       let roofs = null;
@@ -448,7 +451,7 @@ export function render(ctx, time, ui) {
           else {
             const gx = isoX(e.x, e.y), gy = isoY(e.x, e.y, e.z);
             drawGuest(ctx, e.g, gx, gy, sel && sel.kind === 'guest' && sel.id === e.g.id, time, rain);
-            if (e.g.emT > 0 && detail) emotes.push(e.g.em, gx, gy - 27, Math.min(1, e.g.emT * 2));
+            if (e.g.emT > 0 && fine) emotes.push(e.g.em, gx, gy - 27, Math.min(1, e.g.emT * 2));
           }
         }
       }
@@ -460,7 +463,7 @@ export function render(ctx, time, ui) {
     }
   }
   for (let k = 0; k < emotes.length; k += 4) drawEmote(ctx, emotes[k], emotes[k + 1], emotes[k + 2], emotes[k + 3]);
-  cloudShadows(ctx, time);
+  if (look.q < 2) cloudShadows(ctx, time);
   drawFxWorld(ctx, z);
 
   // weather gloom and night: shade the whole picture, then let the lights shine through
@@ -497,6 +500,27 @@ function hot(ctx, p) {
   ctx.fillStyle = 'rgba(255,40,40,0.45)';
   ctx.beginPath(); ctx.arc(isoX(p.x + 0.5, p.y + 0.5), isoY(p.x + 0.5, p.y + 0.5, z), 13, 0, 6.3); ctx.fill();
 }
+// Scenery that does not move (apart from a gentle sway) can be stamped from a picture made once, which
+// is much cheaper than drawing its shapes again every frame. Four pictures per kind cover the size variety.
+const STILL = SCENERY.map((d) => !!d && ['oak', 'pine', 'snowpine', 'palm', 'cactus', 'bush', 'hedge', 'topiary', 'flowers', 'rock', 'bench', 'picnic', 'statue', 'snowman'].includes(d.id));
+const stamps = new Map();
+function stampScenery(ctx, code, cx, cy, hsh) {
+  const b = Math.min(3, (hsh * 4) | 0), key = code * 4 + b;
+  let c = stamps.get(key);
+  if (c === undefined) {
+    c = null;
+    if (typeof document !== 'undefined') {
+      c = document.createElement('canvas');
+      c.width = 144; c.height = 176;
+      const g = c.getContext('2d');
+      g.scale(2, 2);
+      drawScenery(g, code, 36, 72, 0, (b + 0.5) / 4);
+    }
+    stamps.set(key, c);
+  }
+  if (c) ctx.drawImage(c, cx - 36, cy - 72, 72, 88); else drawScenery(ctx, code, cx, cy, 0, hsh);
+}
+
 // Soft shadows of clouds drifting over the park.
 let cloudSprite = null;
 function cloudShadows(ctx, time) {
