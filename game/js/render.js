@@ -17,7 +17,8 @@ export const cam = { x: 0, y: 600, zoom: 1 };
 export const view = { w: 800, h: 600, dpr: 1 };
 // Settings that only change the picture. q = 0 (everything) to 3 (plainest): main.js lowers it by
 // itself when frames take too long, unless auto is off.
-export const look = { night: true, q: 0, auto: true };
+// ground: false draws the ground straight to the screen every frame (to compare against the kept picture).
+export const look = { night: true, q: 0, auto: true, ground: true };
 const HW = 32, HH = 16, ZH = 16;
 const SEA = 0.4; // height of the ground around the park, in levels
 const FONT = 'ui-rounded, "Segoe UI", system-ui, sans-serif';
@@ -295,7 +296,7 @@ function drawBackdrop(ctx, TH, w, h, z, time) {
     if (hs > 0.62) continue;
     const wx = (gx + hash(gy, gx)) * step, wy = (gy + hs) * (step / 2);
     const px = (wx - cam.x) * z + w / 2, py = (wy - cam.y) * z + h / 2;
-    const len = (10 + hs * 26) * z * (TH.sea ? 0.6 + 0.4 * Math.sin(time * 0.9 + hs * 40) : 1);
+    const len = (10 + hs * 26) * z * (TH.sea && time ? 0.6 + 0.4 * Math.sin(time * 0.9 + hs * 40) : 1);
     if (TH.sea) { ctx.moveTo(px - len, py); ctx.lineTo(px + len, py); }
     else { ctx.moveTo(px - len, py + 2 * z); ctx.quadraticCurveTo(px, py - 3 * z, px + len, py + 2 * z); }
   }
@@ -307,12 +308,30 @@ export function render(ctx, time, ui) {
   const dark = look.night ? darkness() : 0;
   if (SP.setNight) SP.setNight(dark);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  drawBackdrop(ctx, TH, w, h, z, time);
+  const detail = z >= 0.6 && look.q < 2;
+  fine = z >= 0.6 && look.q < 3; setTrackDetail(fine);
+  // The ground is drawn once into a picture a bit larger than the screen and then only copied, also
+  // while the map is dragged about. It is drawn afresh when the camera leaves it or something changes;
+  // while zooming, when every frame would need a new one, the ground is drawn straight to the screen.
+  const key = z + ',' + w + ',' + h + ',' + dpr + ',' + S.tv + ',' + S.pv + ',' + S.theme + ',' + detail;
+  steady = z === lastZoom ? steady + 1 : 0;
+  lastZoom = z;
+  const mw = Math.round(w * 0.25), mh = Math.round(h * 0.25);
+  const cached = steady >= 2 && look.ground && typeof document !== 'undefined';
+  if (cached) {
+    if (key !== groundKey || Math.abs(cam.x - gcx) * z > mw - 2 || Math.abs(cam.y - gcy) * z > mh - 2) {
+      groundKey = key; gcx = cam.x; gcy = cam.y;
+      drawGround(TH, w + 2 * mw, h + 2 * mh, z, dpr, detail);
+    }
+    // copy just the part that is on screen
+    ctx.drawImage(ground, (mw + (cam.x - gcx) * z) * dpr, (mh + (cam.y - gcy) * z) * dpr, w * dpr, h * dpr, 0, 0, w, h);
+    if (occlTv !== S.tv) markOccluders();
+  } else drawBackdrop(ctx, TH, w, h, z, time);
   ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (w / 2 - cam.x * z), dpr * (h / 2 - cam.y * z));
   const wx0 = cam.x - w / 2 / z - 48, wx1 = cam.x + w / 2 / z + 48;
   const wy0 = cam.y - h / 2 / z - 48, wy1 = cam.y + h / 2 / z;
-  const detail = z >= 0.6 && look.q < 2, rain = fxWet() > 0.5;
-  fine = z >= 0.6 && look.q < 3; setTrackDetail(fine);
+  const rain = fxWet() > 0.5;
+  frameNo++;
   const stamp = (look.q >= 1 || z < 1) && z * dpr <= 2.2; // still scenery may be drawn from ready-made pictures
   lights.length = 0; emotes.length = 0;
 
@@ -397,7 +416,9 @@ export function render(ctx, time, ui) {
       const he = heff(i), sx = isoX(x, y), sy = isoY(x, y, he);
       const hasTrack = S.trk.has(i);
       if (sx < wx0 - HW || sx > wx1 + HW || sy < wy0 - 40 || sy > wy1 + (hasTrack ? 460 : S.occ[i] ? 240 : 120)) continue;
-      drawTile(ctx, TH, x, y, i, he, sx, sy, time, detail);
+      // from the picture of the ground, only tiles that can hide something behind them are drawn again
+      if (!cached || occl[i]) drawTile(ctx, TH, x, y, i, he, sx, sy, time, detail);
+      else if (detail && S.water[i] && !S.path[i]) ripple(ctx, x, y, sx, sy, time);
       const sc = S.scn[i];
       if (sc) {
         if (stamp && STILL[sc]) stampScenery(ctx, sc, sx, sy + HH, hash(x, y)); else drawScenery(ctx, sc, sx, sy + HH, time, hash(x, y));
@@ -463,7 +484,7 @@ export function render(ctx, time, ui) {
     }
   }
   for (let k = 0; k < emotes.length; k += 4) drawEmote(ctx, emotes[k], emotes[k + 1], emotes[k + 2], emotes[k + 3]);
-  if (look.q < 2) cloudShadows(ctx, time);
+  if (look.q < 1) cloudShadows(ctx, time);
   drawFxWorld(ctx, z);
 
   // weather gloom and night: shade the whole picture, then let the lights shine through
@@ -586,19 +607,14 @@ function drawTile(ctx, TH, x, y, i, he, sx, sy, time, detail) {
     // foam where the water meets the bank behind it
     if ((!wA || !wB) && detail) {
       ctx.strokeStyle = TH.foam; ctx.lineWidth = 2; ctx.lineCap = 'round';
-      const o = 1.5 + Math.sin(time * 1.6 + x + y) * 0.9;
+      const o = 1.5 + (time < 0 ? 0 : Math.sin(time * 1.6 + x + y) * 0.9);
       ctx.beginPath();
       if (!wB) { ctx.moveTo(sx + 2, sy + 2 + o); ctx.lineTo(sx + HW - 4, sy + HH - 1 + o); }
       if (!wA) { ctx.moveTo(sx - 2, sy + 2 + o); ctx.lineTo(sx - HW + 4, sy + HH - 1 + o); }
       ctx.stroke();
     }
-    const ph = detail && !path ? (time * 0.6 + hash(x, y) * 6) % 3 : 9;
     if (path) bridge(ctx, TH, x, y, i, sx, isoY(x, y, S.h[i] + 1), path === 2);
-    if (ph < 1.6) {
-      ctx.strokeStyle = `rgba(255,255,255,${0.55 * Math.sin((ph / 1.6) * Math.PI)})`; ctx.lineWidth = 1.4; ctx.lineCap = 'round';
-      const ox = (hash(y, x) - 0.5) * 24, oy = HH + (hash(x + 9, y) - 0.5) * 10;
-      ctx.beginPath(); ctx.moveTo(sx + ox - 6, sy + oy); ctx.lineTo(sx + ox + 6, sy + oy); ctx.stroke();
-    }
+    else if (detail && time >= 0) ripple(ctx, x, y, sx, sy, time);
     return;
   }
   const hs = hash(x, y);
@@ -687,6 +703,50 @@ function bridge(ctx, TH, x, y, i, sx, sy, queue) {
   ctx.stroke();
 }
 
+// A glint that comes and goes on a water tile.
+function ripple(ctx, x, y, sx, sy, time) {
+  const ph = (time * 0.6 + hash(x, y) * 6) % 3;
+  if (ph >= 1.6) return;
+  ctx.strokeStyle = `rgba(255,255,255,${0.55 * Math.sin((ph / 1.6) * Math.PI)})`; ctx.lineWidth = 1.4; ctx.lineCap = 'round';
+  const ox = (hash(y, x) - 0.5) * 24, oy = HH + (hash(x + 9, y) - 0.5) * 10;
+  ctx.beginPath(); ctx.moveTo(sx + ox - 6, sy + oy); ctx.lineTo(sx + ox + 6, sy + oy); ctx.stroke();
+}
+
+// ---------- pictures kept between frames ----------
+let ground = null, groundKey = '', gcx = 0, gcy = 0, lastZoom = 0, steady = 0, frameNo = 0, occlTv = -1;
+const occl = new Uint8Array(N * N);
+// The backdrop and every ground tile on screen, drawn once (time < 0 means: nothing that moves).
+function drawGround(TH, w, h, z, dpr, detail) {
+  if (!ground) ground = document.createElement('canvas');
+  const cw = Math.round(w * dpr), ch = Math.round(h * dpr);
+  if (ground.width !== cw || ground.height !== ch) { ground.width = cw; ground.height = ch; }
+  const g = ground.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  farGrad = null; drawBackdrop(g, TH, w, h, z, 0); farGrad = null;
+  g.setTransform(dpr * z, 0, 0, dpr * z, dpr * (w / 2 - cam.x * z), dpr * (h / 2 - cam.y * z));
+  const wx0 = cam.x - w / 2 / z - 80, wx1 = cam.x + w / 2 / z + 80, wy0 = cam.y - h / 2 / z - 90, wy1 = cam.y + h / 2 / z + 150;
+  for (let d = 0; d <= 2 * N - 2; d++) {
+    for (let x = Math.max(0, d - N + 1); x <= Math.min(N - 1, d); x++) {
+      const y = d - x, i = idx(x, y), he = heff(i), sx = isoX(x, y), sy = isoY(x, y, he);
+      if (sx < wx0 || sx > wx1 || sy < wy0 || sy > wy1) continue;
+      drawTile(g, TH, x, y, i, he, sx, sy, -1, detail);
+    }
+  }
+}
+// A tile has to be drawn again on top of the ground picture only if it stands higher than ground just
+// behind it, because then it can hide the feet of something standing there.
+function markOccluders() {
+  occlTv = S.tv;
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const i = idx(x, y), h = S.h[i];
+    let hit = 0;
+    for (let dy = 0; dy <= 4 && !hit; dy++) for (let dx = 0; dx <= 4; dx++) {
+      if ((!dx && !dy) || x - dx < 0 || y - dy < 0) continue;
+      if (S.h[idx(x - dx, y - dy)] < h - Math.max(dx, dy) + 1) { hit = 1; break; }
+    }
+    occl[i] = hit;
+  }
+}
 function stairs(ctx, x0, y0, x1, y1, dh, col) {
   ctx.beginPath();
   const mx0 = x0 + (x1 - x0) * 0.2, my0 = y0 + (y1 - y0) * 0.2, mx1 = x0 + (x1 - x0) * 0.8, my1 = y0 + (y1 - y0) * 0.8;
