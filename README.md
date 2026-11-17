@@ -13,7 +13,8 @@ Play it on Toki: https://playtoki.app/game/coastr
 - **Park management**: guests with hunger, thirst, energy and opinions; ride and ticket prices;
   loans, advertising and research.
 - **Career** with ten goals and unlockable rides, and a **sandbox** with everything unlocked.
-- Land shaping and water, ten kinds of scenery, nine flat rides, five stalls.
+- A 60 by 60 tile park with land shaping and water, ten kinds of scenery, nine flat rides and
+  five stalls.
 - Saves automatically in the browser. On Toki, park value and peak guest count go to two
   high-score lists and there are 14 achievements.
 
@@ -39,6 +40,11 @@ node /tmp/toki-upload.mjs .
 ```
 
 Bump `version` and `notes` in `toki.json` when there is something new for players.
+
+## Working on it
+
+`CLAUDE.md` has the conventions, the screen sizes to check and the things to know about how Toki
+shows the game. There is no build step and no test suite; run the game to check a change.
 
 ## Code map
 
