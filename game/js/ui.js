@@ -8,9 +8,9 @@ import {
   placeScenery, removeScenery, canTerrain, terrain, canWater, setWater, whatAt, removeObj, objValue, accessTiles,
   parkValue, canAfford, spend, earn, snapshot, restore,
 } from './world.js';
-import { canStartCoaster, startCoaster, addPiece, undoPiece, autoFinish, endState, previewPiece } from './coaster.js';
+import { canStartCoaster, startCoaster, addPiece, undoPiece, autoFinish, endState, previewPiece, posAt, trainDist } from './coaster.js';
 import { rideWorth, rideStats, rideUsable } from './guests.js';
-import { date, feeWorth, goalProgress, startTest, coasterCap, goalsOf, researchNext, darkness } from './sim.js';
+import { date, feeWorth, goalProgress, startTest, coasterCap, goalsOf, researchNext, darkness, maxTrains, trainsOf, trainCost } from './sim.js';
 import { cam, view, look, pickTile, pickThing, toWorld, isoX, isoY, coasterThumb, objCenter } from './render.js';
 import { drawRide, drawStall, thumbRide, thumbStall, thumbScenery, drawScenery } from './sprites.js';
 import { t, money, num, lang } from './i18n.js';
@@ -649,6 +649,7 @@ function panelHTML() {
       if (isC && o.I > 9) h += `<div class="warn">${esc(t('too_intense'))}</div>`;
     }
     if (isC && usable) {
+      h += `<div class="row"><span>${esc(t('trains'))}</span><div class="stepper"><button data-act="train-" aria-label="-">−</button><b data-k="trains"></b><button data-act="train+" aria-label="+">+</button></div></div><div class="hint" data-k="trainhint"></div>`;
       h += `<div class="facts">${fact('len', t('length'))}${fact('spd', t('top_speed'))}${fact('drp', t('biggest_drop'))}${fact('tim', t('ride_time'))}${fact('gmax', t('max_g'))}${fact('air', t('airtime'))}</div>`;
     }
     h += `<div class="facts">${isS ? '' : fact('queue', t('queue'))}${fact('cust', t('customers'))}${fact('inc', t('income'))}${isS ? '' : fact('cap', t('capacity'))}</div>`;
@@ -752,7 +753,8 @@ function panelValues() {
     if (st) {
       v.worth = t('guests_pay', money(Math.round(rideWorth(st.E) * 2) / 2));
       for (const k of ['E', 'I', 'Q']) { v[k] = num(st[k], 1) + ' ' + word(st[k]); w[k] = Math.min(100, st[k] * 10); }
-      v.queue = num(o.queue.length); v.cap = num(isC ? coasterCap(o) : RIDES[o.type].cap);
+      v.queue = num(o.queue.length); v.cap = num(isC ? coasterCap(o) * trainsOf(o) : RIDES[o.type].cap);
+      if (isC) { v.trains = trainsOf(o) + ' / ' + maxTrains(o); v.trainhint = t(maxTrains(o) > 1 ? 'train_hint' : 'train_short', money(trainCost(o))); }
     }
     if (isC && o.sim) {
       const s = o.sim;
@@ -874,6 +876,13 @@ function onPanel(e) {
       else if (startTest(o)) { ui.follow = o.id; els.testhud.hidden = false; sfx('whoosh'); }
     } else if (a === 'watch') {
       if (ui.follow === o.id) stopFollow(); else { ui.follow = o.id; els.testhud.hidden = false; }
+    } else if (a === 'train+') {
+      const cost = trainCost(o);
+      if (trainsOf(o) >= maxTrains(o)) { sfx('error'); toast(t('train_max'), 'bad'); }
+      else if (!canAfford(cost)) fail({ why: 'e_money' });
+      else { spend(cost, 'build'); o.cost += cost; o.trains = trainsOf(o) + 1; sfx('cash'); }
+    } else if (a === 'train-') {
+      if (trainsOf(o) > 1) { const cost = trainCost(o); earn(Math.round(cost / 2), 'build'); o.cost -= cost; o.trains = trainsOf(o) - 1; }
     } else if (a.startsWith('col')) { o.col = +a.slice(3); for (const pc of o.pieces) pc.geo = null; }
   } else if (panel.type === 'finance') {
     if (a === 'fee+') S.fee = Math.min(80, S.fee + 1);
@@ -1010,6 +1019,38 @@ export function updateTestHud() {
   const hgt = Math.max(0, (c.sim.Z[k % c.sim.n] - c.pieces[0].h0) * 2);
   els.testhud.innerHTML = `<div><span>${esc(t('speed_now'))}</span>${esc(t('kmh', num(c.sim.v[k] * 3.6)))}</div><div><span>↕</span>${esc(t('meters', num(hgt)))}</div><div><span>G</span>${num(c.sim.gv[k] || 1, 1)}</div>`;
 }
+
+// ---------- coaster sounds ----------
+// Trains you can see make noise: the lift clatters, riders scream on a big drop, a fast train rushes by.
+const sp = {};
+let clackT = 0, screamT = 0;
+export function updateSounds(dt) {
+  clackT -= dt; screamT -= dt;
+  if (!audio.sfx || !S.speed && !ui.follow) return;
+  let lift = 0;
+  for (const id in S.objs) {
+    const c = S.objs[id];
+    if (c.kind !== 'coaster' || !c.sim || !c.sim.ok) continue;
+    const runs = c.st === 'test' ? testRun(c) : c.runs;
+    if (!runs || !runs.length) continue;
+    for (const r of runs) {
+      if (!posAt(c.sim, trainDist(c.sim, r.t), sp)) continue;
+      const px = (isoX(sp.x, sp.y) - cam.x) * cam.zoom + view.w / 2, py = (isoY(sp.x, sp.y, sp.z) - cam.y) * cam.zoom + view.h / 2;
+      if (px < -40 || py < -40 || px > view.w + 40 || py > view.h + 40) continue;
+      const vol = ui.follow === c.id ? 1 : Math.max(0.2, Math.min(0.75, cam.zoom * 0.55));
+      const p = c.pieces[sp.pi], v = c.sim.v[Math.min(c.sim.segs, sp.k)] || 0;
+      if (p.chain) lift = Math.max(lift, vol);
+      // one scream for each drop and one rush of wind for each fast stretch
+      const falling = sp.tz < -0.02 && v > 13;
+      if (falling && !r.scr && screamT <= 0 && (r.riders ? r.riders.length : 0) > 0) { sfx('scream', vol); screamT = 1.6; }
+      r.scr = falling;
+      if (v > 19 && !r.wsh) { sfx('rush', vol * 0.8); r.wsh = true; } else if (v < 13) r.wsh = false;
+    }
+  }
+  if (lift && clackT <= 0) { sfx('clack', lift); clackT = 0.15; }
+}
+const testOne = [{ t: 0, riders: null }];
+function testRun(c) { testOne[0].t = c.runT; return testOne; }
 
 // ---------- map input ----------
 const pointers = new Map();

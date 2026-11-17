@@ -250,6 +250,7 @@ function drawEmote(ctx, kind, x, y, a) {
 // ---------- the frame ----------
 let buckets = new Map();
 const tp = {};
+const trains = []; // flat list for one coaster: time on track, riders, moving (1) or waiting (0)
 let fine = true; // zoomed in far enough for small details to be worth drawing
 const gp = {};
 let farGrad = null, farKey = '';
@@ -338,39 +339,48 @@ export function render(ctx, time, ui) {
       }
     }
     if (c.kind !== 'coaster' || !c.sim || c.sim.L < 13) continue;
-    const moving = c.st === 'run' || c.st === 'test';
-    const head = moving ? trainDist(c.sim, c.runT) : STATION_HEAD;
-    const T = COASTERS[c.ctype];
-    let riders = c.st === 'run' ? c.riders.length : c.st === 'test' ? 0 : 0;
-    for (let j = 0; j < T.cars; j++) {
-      let dist = head - j * CAR_LEN;
-      if (!c.closed) dist = Math.max(0.1, Math.min(c.sim.L - 0.1, dist));
-      if (!posAt(c.sim, dist, tp)) continue;
-      const p = c.pieces[tp.pi];
-      let sx, sy, sz = 0;
-      if (p.t === 'loop') { sx = -DY[p.d]; sy = DX[p.d]; }
-      else if (p.t === 'cork') { const th = corkAngle(tp.u); sx = -DY[p.d] * Math.cos(th); sy = DX[p.d] * Math.cos(th); sz = Math.sin(th); }
-      else {
-        const l = Math.hypot(tp.tx, tp.ty) || 1;
-        sx = -tp.ty / l; sy = tp.tx / l;
-        if (p.bank) {
-          // lean into the turn with the rails: the outer rail is lifted by this much over half the track width
-          const tan = (bankAt(c, tp.pi, tp.u) * 2) / 0.52, m = Math.hypot(1, tan);
-          sx /= m; sy /= m; sz = tan / m;
-        }
-      }
-      const v = c.sim.v[Math.min(c.sim.segs, tp.k)] || 0;
-      const car = {
-        car: 1, c, x: tp.x, y: tp.y, z: tp.z, tx: tp.tx, ty: tp.ty, tz: tp.tz, sx, sy, sz, d: tp.x + tp.y + 0.01,
-        riders: Math.min(2, riders), first: j === 0, last: j === T.cars - 1, n: T.cars, j, time, v, fun: moving && v > 9 && p.t !== 'station' && !p.chain ? 1 : 0,
-      };
-      riders -= 2;
-      const tx = Math.max(0, Math.min(N - 1, Math.floor(tp.x))), ty = Math.max(0, Math.min(N - 1, Math.floor(tp.y)));
-      addBucket(idx(tx, ty), car);
-      if (j === 0 && moving && dark > 0.05) lights.push(isoX(tp.x, tp.y), isoY(tp.x, tp.y, tp.z + 0.6), 34, 1);
+    const T = COASTERS[c.ctype], sm = c.sim;
+    // every train that is out on the track, plus one waiting in the station if there is one to spare
+    trains.length = 0;
+    if (c.st === 'test') trains.push(c.runT, 0, 1);
+    else {
+      let arriving = false;
+      if (c.runs) for (const r of c.runs) { trains.push(r.t, r.riders.length, 1); if (r.t > sm.T - 3.2) arriving = true; }
+      if (!arriving && (!c.runs || c.runs.length < Math.max(1, Math.min(3, c.trains || 1)) || !c.runs.length)) trains.push(0, 0, 0);
     }
-    if (ui.follow === c.id && posAt(c.sim, head, tp)) {
-      ui.followPos = [isoX(tp.x, tp.y), isoY(tp.x, tp.y, tp.z), tp.k];
+    for (let q = 0; q < trains.length; q += 3) {
+      const moving = trains[q + 2] === 1, head = moving ? trainDist(sm, trains[q]) : STATION_HEAD;
+      let riders = trains[q + 1];
+      for (let j = 0; j < T.cars; j++) {
+        let dist = head - j * CAR_LEN;
+        if (!c.closed) dist = Math.max(0.1, Math.min(sm.L - 0.1, dist));
+        if (!posAt(sm, dist, tp)) continue;
+        const p = c.pieces[tp.pi];
+        let sx, sy, sz = 0;
+        if (p.t === 'loop') { sx = -DY[p.d]; sy = DX[p.d]; }
+        else if (p.t === 'cork') { const th = corkAngle(tp.u); sx = -DY[p.d] * Math.cos(th); sy = DX[p.d] * Math.cos(th); sz = Math.sin(th); }
+        else {
+          const l = Math.hypot(tp.tx, tp.ty) || 1;
+          sx = -tp.ty / l; sy = tp.tx / l;
+          if (p.bank) {
+            // lean into the turn with the rails: the outer rail is lifted by this much over half the track width
+            const tan = (bankAt(c, tp.pi, tp.u) * 2) / 0.52, m = Math.hypot(1, tan);
+            sx /= m; sy /= m; sz = tan / m;
+          }
+        }
+        const v = sm.v[Math.min(sm.segs, tp.k)] || 0;
+        const car = {
+          car: 1, c, x: tp.x, y: tp.y, z: tp.z, tx: tp.tx, ty: tp.ty, tz: tp.tz, sx, sy, sz, d: tp.x + tp.y + 0.01,
+          riders: Math.max(0, Math.min(2, riders)), first: j === 0, last: j === T.cars - 1, n: T.cars, j, time, v,
+          fun: moving && v > 9 && p.t !== 'station' && !p.chain ? 1 : 0,
+        };
+        riders -= 2;
+        const tx = Math.max(0, Math.min(N - 1, Math.floor(tp.x))), ty = Math.max(0, Math.min(N - 1, Math.floor(tp.y)));
+        addBucket(idx(tx, ty), car);
+        if (j === 0 && moving && dark > 0.05) lights.push(isoX(tp.x, tp.y), isoY(tp.x, tp.y, tp.z + 0.6), 34, 1);
+      }
+      // the camera follows the first train in the list
+      if (q === 0 && ui.follow === c.id && posAt(sm, head, tp)) ui.followPos = [isoX(tp.x, tp.y), isoY(tp.x, tp.y, tp.z), tp.k];
     }
   }
 

@@ -198,7 +198,7 @@ function afterEdit(c) {
 }
 function kickOut(c) {
   for (const g of S.guests) if (g.obj === c.id) { g.obj = 0; g.st = 'walk'; g.target = null; }
-  c.queue = []; c.riders = []; c.st = 'idle';
+  c.queue = []; c.riders = []; c.runs = []; c.st = 'idle';
 }
 
 /** Finds the shortest way back to the station and builds it, with brakes first if the train is fast. */

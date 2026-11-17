@@ -477,7 +477,7 @@ export function serialize() {
   for (const id in S.objs) {
     const o = S.objs[id];
     const c = { ...o, queue: [], riders: [], st: 'idle', timer: 0 };
-    delete c.sim; delete c.geo; delete c.test; delete c.pop; delete c.spin; delete c.anim; delete c.noAccess;
+    delete c.sim; delete c.geo; delete c.test; delete c.pop; delete c.spin; delete c.anim; delete c.noAccess; delete c.runs; delete c.gap; delete c.load;
     if (c.pieces) c.pieces = c.pieces.map((p) => ({ t: p.t, x: p.x, y: p.y, d: p.d, h0: p.h0, h1: p.h1, chain: p.chain ? 1 : 0, bank: p.bank ? 1 : 0, cost: p.cost || 0 }));
     objs.push(c);
   }
@@ -508,7 +508,7 @@ export function deserialize(d) {
     if (o.kind === 'coaster') { for (const p of o.pieces) { p.x += ox; p.y += oy; } }
     o.x += ox; o.y += oy;
     S.objs[o.id] = o;
-    o.queue = []; o.riders = []; o.st = 'idle'; o.timer = 0;
+    o.queue = []; o.riders = []; o.runs = []; o.st = 'idle'; o.timer = 0;
     if (o.kind !== 'coaster') for (let j = 0; j < o.h; j++) for (let i = 0; i < o.w; i++) S.occ[idx(o.x + i, o.y + j)] = o.id;
   }
   for (const k of ['nextId', 'cash', 'loan', 'fee', 'open', 'time', 'rating', 'peakGuests', 'unlocked',

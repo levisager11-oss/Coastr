@@ -4,7 +4,7 @@ import { tick, initAfterLoad } from './sim.js';
 import { render, cam, view, look, isoX, isoY, toScreen, mapThumb } from './render.js';
 import {
   ui, initUI, resetUI, buildHUD, refreshHUD, handleEvents, moveCamera, centerOn, toast, dialog, showHelp, updateTestHud, closePanel,
-  starsHTML,
+  starsHTML, updateSounds,
 } from './ui.js';
 import { SCENARIOS, SCENARIO_ORDER } from './data.js';
 import { updateFx, clearFx } from './fx.js';
@@ -227,6 +227,7 @@ function frame(now) {
     }
     moveCamera(dt);
     updateFx(dt, cam.x, cam.y, view.w / cam.zoom);
+    updateSounds(dt);
     render(ctx, now / 1000, ui);
     handleEvents();
     updateTestHud();

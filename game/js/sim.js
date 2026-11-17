@@ -9,6 +9,10 @@ import { recompute } from './coaster.js';
 let secAcc = 0, spawnAcc = 0;
 
 export function coasterCap(c) { return COASTERS[c.ctype].cap; }
+/** How many trains a track has room for: one for every 70 m, three at most. */
+export function maxTrains(c) { return c.sim && c.sim.ok ? Math.max(1, Math.min(3, Math.floor(c.sim.L / 70))) : 1; }
+export const trainsOf = (c) => Math.max(1, Math.min(maxTrains(c), c.trains || 1));
+export const trainCost = (c) => Math.round(COASTERS[c.ctype].station * 0.6);
 
 export function initAfterLoad() {
   for (const id in S.objs) {
@@ -138,9 +142,10 @@ function updateRide(o, dt) {
       }
       o.queue = []; o.riders = [];
     }
-    o.st = 'idle';
+    o.st = 'idle'; o.runs = [];
     return;
   }
+  if (isC) { updateTrains(o, dt, cap); return; }
   if (o.st === 'idle') {
     if (o.queue.length) { o.st = 'load'; o.timer = 4; }
   } else if (o.st === 'load') {
@@ -167,6 +172,45 @@ function updateRide(o, dt) {
       o.riders = []; o.st = 'idle'; o.runT = 0;
     }
   }
+}
+
+// A coaster can have several trains out at once. Each is a run {t, riders}; the next one leaves when
+// the one before is far enough ahead.
+function updateTrains(o, dt, cap) {
+  const T = o.sim.T, n = trainsOf(o);
+  if (!o.runs) o.runs = [];
+  let home = false;
+  for (const r of o.runs) { r.t += dt; if (r.t >= T) home = true; }
+  if (home) {
+    const tiles = accessTiles(o);
+    o.runs = o.runs.filter((r) => {
+      if (r.t < T) return true;
+      for (const id of r.riders) { const g = S.gmap.get(id); if (g) unloadRider(g, o, tiles); }
+      return false;
+    });
+    o.riders = o.runs.flatMap((r) => r.riders);
+  }
+  o.gap = (o.gap || 0) + dt;
+  const free = o.runs.length < n && (!o.runs.length || o.gap >= Math.max(9, T / n));
+  if (!free || !o.queue.length) o.load = 0;
+  else {
+    o.load = (o.load || 0) + dt;
+    if (o.load >= (o.queue.length >= cap ? 0.8 : 4)) {
+      const riders = o.queue.splice(0, cap);
+      for (const id of riders) {
+        const g = S.gmap.get(id);
+        if (!g) continue;
+        g.st = 'ride'; g.cash -= o.price;
+        earn(o.price, 'rides'); o.customers++; o.income += o.price;
+      }
+      o.runs.push({ t: 0, riders });
+      o.riders = o.runs.flatMap((r) => r.riders);
+      o.gap = 0; o.load = 0;
+      emit('dispatch', { id: o.id, sum: o.price * riders.length });
+    }
+  }
+  o.st = o.runs.length ? 'run' : o.load > 0 ? 'load' : 'idle';
+  o.runT = o.runs.length ? o.runs[0].t : 0;
 }
 
 // ---------- research ----------
@@ -272,7 +316,7 @@ function newMonth() {
   let run = 0;
   for (const id in S.objs) {
     const o = S.objs[id];
-    run += o.kind === 'coaster' ? COASTERS[o.ctype].run : (o.kind === 'ride' ? RIDES : STALLS)[o.type].run;
+    run += o.kind === 'coaster' ? COASTERS[o.ctype].run * (1 + 0.3 * (trainsOf(o) - 1)) : (o.kind === 'ride' ? RIDES : STALLS)[o.type].run;
   }
   if (run) spend(run, 'running');
   if (S.loan > 0) spend(Math.round(S.loan * 0.01), 'interest');

@@ -75,7 +75,7 @@ export function rideUsable(o) {
   return o.kind === 'ride';
 }
 export function queueMax(o) {
-  const cap = o.kind === 'coaster' ? o.capacity || 12 : RIDES[o.type].cap;
+  const cap = o.kind === 'coaster' ? (o.capacity || 12) * (o.trains || 1) : RIDES[o.type].cap;
   return cap * 2 + 4;
 }
 
