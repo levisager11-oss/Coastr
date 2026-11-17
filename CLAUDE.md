@@ -120,6 +120,10 @@ TOKI_KEY="$TOKI_KEY" node /tmp/toki-upload.mjs .
 - Several trains: `c.trains` (1 to `maxTrains(c)`), each train out on the track is an entry
   `{ t, riders }` in `c.runs` (`updateTrains` in `sim.js`). `c.riders` is everyone on all of them.
   `c.runs` is not saved.
+- A design is a whole track as a string of words, one per piece (`pieceWord`, `designOf`,
+  `canPlaceDesign`, `placeDesign` in `coaster.js`). The ready-made ones are `DESIGNS` in `data.js`;
+  each must close on flat ground, so re-check them (build one with `placeDesign` in Node) after any
+  change to piece geometry. Saved ones live in `localStorage` under `coastr.designs`.
 - Track and train pictures are in `track.js`. Its geometry cache (`piece.geo`) must hold everything
   that can be worked out once; drawing a piece should be a handful of fills and strokes.
 - Edit tracks through `addPiece` / `undoPiece` / `autoFinish`, which also clear the cached drawing
@@ -127,7 +131,7 @@ TOKI_KEY="$TOKI_KEY" node /tmp/toki-upload.mjs .
 
 **Saves**
 - `localStorage` keys: `coastr.save.career` (the first scenario), `coastr.save.<scenario>`,
-  `coastr.save.sandbox`, `coastr.settings`, `coastr.progress`.
+  `coastr.save.sandbox`, `coastr.settings`, `coastr.progress`, `coastr.designs`.
 - Save format is `v: 2` with `n` (map size), `sc` (scenario) and `rle: 1` (map layers stored as
   run-length pairs). Saves without `n` are from the 40x40 map and are shifted to the front centre
   of the current map in `deserialize`; saves without `rle` have one character per tile; saves

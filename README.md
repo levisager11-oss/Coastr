@@ -13,6 +13,7 @@ Play it on Toki: https://playtoki.app/game/coastr
   track by tapping one of its pieces. Ratings for excitement, intensity and nausea are worked out
   from the track itself the moment the circuit is closed; red dots show where a track is too rough.
   Each coaster can be painted, run up to three trains, and have its train followed by the camera.
+  Six ready-made designs can be placed in one go, and your own designs can be saved and reused.
 - **Four scenarios** on different maps and in different looks (meadow, lagoon, desert, snowy
   mountain), each with its own goals and three stars to earn, plus a **sandbox** on any map with
   everything unlocked.

@@ -1,7 +1,7 @@
 // Coaster tracks: pieces, geometry, physics and ratings.
 import { N, DX, DY, COASTERS, SCENERY } from './data.js';
 import {
-  S, idx, inB, canAfford, spend, earn, registerPiece, unregisterPiece, nameFor, emit, pieceCells, pieceTiles, walkH,
+  S, idx, inB, canAfford, spend, earn, registerPiece, unregisterPiece, nameFor, emit, pieceCells, pieceTiles, walkH, removeObj,
 } from './world.js';
 
 const OK = { ok: true };
@@ -199,6 +199,70 @@ function afterEdit(c) {
 function kickOut(c) {
   for (const g of S.guests) if (g.obj === c.id) { g.obj = 0; g.st = 'walk'; g.target = null; }
   c.queue = []; c.riders = []; c.runs = []; c.st = 'idle';
+}
+
+// ---------- designs: a whole track written down as a list of short words ----------
+// One word per piece after the station: the type (s, l, r, wl, wr, loop, cork, boost, brake), then
+// for straights and turns the slope (-2..2), then c for a lift chain and b for banking: "s1c", "wr0b".
+export function pieceWord(p) {
+  if (p.t !== 's' && !isTurn(p)) return p.t;
+  return p.t + (p.h1 - p.h0) / (isWide(p) ? 2 : 1) + (p.chain ? 'c' : '') + (p.bank ? 'b' : '');
+}
+function wordSpec(w) {
+  const m = /^(wl|wr|s|l|r)(-?\d)(c?)(b?)$/.exec(w);
+  return m ? { t: m[1], slope: +m[2], chain: !!m[3], bank: !!m[4] } : { t: w };
+}
+/** The design of a finished coaster: {ctype, words, col}. */
+export function designOf(c) {
+  return { ctype: c.ctype, col: c.col | 0, words: c.pieces.filter((p) => p.t !== 'station').map(pieceWord).join(' ') };
+}
+/**
+ * Would this design fit with its station at x, y facing d? Nothing is built. Returns {ok, why, cost,
+ * tiles}: tiles are [x, y, fits] for every tile the track would cover, for the preview.
+ */
+export function canPlaceDesign(design, x, y, d) {
+  const T = COASTERS[design.ctype], tiles = [];
+  for (let k = 0; k < 3; k++) tiles.push([x + DX[d] * k, y + DY[d] * k, true]);
+  const st = canStartCoaster(design.ctype, x, y, d);
+  if (!st.ok && st.why !== 'e_money') { for (const tl of tiles) tl[2] = false; return { ok: false, why: st.why, cost: 0, tiles }; }
+  const tc = { ctype: design.ctype, pieces: [] };
+  for (let k = 0; k < 3; k++) tc.pieces.push({ t: 'station', x: x + DX[d] * k, y: y + DY[d] * k, d, h0: st.z, h1: st.z, chain: false, bank: false });
+  let cost = T.station, why = null;
+  for (const w of design.words.split(' ')) {
+    const p = buildPiece(tc, wordSpec(w)), r = checkPiece(tc, p, true);
+    if (!r.ok && !why) why = r.why;
+    for (const [tx, ty] of pieceTiles(p)) tiles.push([tx, ty, r.ok]);
+    cost += inB(p.x, p.y) ? pieceCost(tc, p) : 0;
+    tc.pieces.push(p);
+  }
+  if (!why && !isClosed(tc)) why = 'e_noroute';
+  if (!why && !canAfford(cost)) why = 'e_money';
+  return { ok: !why, why, cost: Math.round(cost), tiles };
+}
+/** The centre line of a design as points [x, y, z] from a station at 0, 0 facing +x, for small pictures. */
+export function designShape(design) {
+  const tc = { ctype: design.ctype, closed: false, pieces: [] }, out = [];
+  for (let k = 0; k < 3; k++) tc.pieces.push({ t: 'station', x: k, y: 0, d: 0, h0: 0, h1: 0, chain: false, bank: false });
+  for (const w of design.words.split(' ')) tc.pieces.push(buildPiece(tc, wordSpec(w)));
+  tc.closed = true;
+  for (let i = 0; i < tc.pieces.length; i++) for (const q of pieceSamples(tc, i)) out.push([q.x, q.y, q.z]);
+  return out;
+}
+/** Build a whole design. Either all of it is built or nothing is. */
+export function placeDesign(design, x, y, d) {
+  const chk = canPlaceDesign(design, x, y, d);
+  if (!chk.ok) return chk;
+  const r = startCoaster(design.ctype, x, y, d);
+  if (!r.ok) return r;
+  const c = r.obj;
+  c.col = design.col | 0;
+  for (const w of design.words.split(' ')) {
+    const p = buildPiece(c, wordSpec(w)), q = checkPiece(c, p);
+    if (!q.ok) { earn(c.cost, 'build'); removeObj(c.id, false); return q; }
+    commitPiece(c, p);
+  }
+  afterEdit(c);
+  return { ok: true, obj: c };
 }
 
 /** What can be changed on piece i without moving the track: {chain, bank, kind}. */

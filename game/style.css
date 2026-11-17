@@ -105,9 +105,13 @@ svg { display: block; }
 #tray { background: var(--card); border-radius: 16px; box-shadow: var(--shadow); padding: 6px; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: thin; }
 #tray .card { flex: none; width: 84px; border-radius: 12px; padding: 4px 3px 5px; display: flex; flex-direction: column; align-items: center; gap: 1px; background: #f3f5fa; position: relative; }
 #tray .card canvas { width: 64px; height: 50px; }
-#tray .card .nm { font-size: 11px; text-align: center; line-height: 1.15; min-height: 2.3em; display: flex; align-items: center; white-space: normal; }
+#tray .card .nm { font-size: 11px; text-align: center; line-height: 1.15; min-height: 2.3em; display: flex; align-items: center; justify-content: center; white-space: normal; max-width: 100%; overflow-wrap: anywhere; hyphens: auto; }
 #tray .card .pr { font-size: 11.5px; color: #05805f; font-weight: 800; }
 #tray .card.on { background: var(--yellow); }
+#tray .card.design { background: #eaf3ff; }
+#tray .card.design.on { background: var(--yellow); }
+#tray .card .del { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 7px; background: rgba(43, 45, 66, 0.75); color: #fff; display: flex; align-items: center; justify-content: center; }
+#tray .card .del svg { width: 10px; height: 10px; }
 #tray .card.locked canvas { filter: grayscale(1); opacity: 0.45; }
 #tray .card.locked .pr { color: var(--soft); display: flex; align-items: center; gap: 3px; }
 #tray .card.locked .pr svg { width: 11px; height: 11px; }

@@ -1,7 +1,7 @@
 // Everything the player touches: toolbar, build menus, panels, the coaster builder, and map input.
 import {
   N, DX, DY, RIDES, STALLS, SCENERY, SCN, COASTERS, RIDE_ORDER, STALL_ORDER, COASTER_ORDER, SCENERY_ORDER, RESEARCH, RESEARCH_LEVELS,
-  MAX_LOAN, TRACK_COLORS, SCENARIOS,
+  MAX_LOAN, TRACK_COLORS, SCENARIOS, DESIGNS, DESIGN_ORDER,
 } from './data.js';
 import {
   S, idx, inB, events, canPath, placePath, removePath, canPlaceBox, placeRide, placeStall, footprint, canScenery,
@@ -10,6 +10,7 @@ import {
 } from './world.js';
 import {
   canStartCoaster, startCoaster, addPiece, undoPiece, autoFinish, endState, previewPiece, posAt, trainDist, alterable, alterPiece, cutAfter,
+  canPlaceDesign, placeDesign, designOf, designShape,
 } from './coaster.js';
 import { rideWorth, rideStats, rideUsable, buzz } from './guests.js';
 import { date, feeWorth, goalProgress, startTest, coasterCap, goalsOf, researchNext, darkness, maxTrains, trainsOf, trainCost, renovate, renovateCost } from './sim.js';
@@ -102,12 +103,40 @@ function arrowUpDown(ctx, cx, cy, up, col) {
   ctx.lineTo(cx + 3, cy - 8 * s); ctx.lineTo(cx + 3, cy); ctx.lineTo(cx + 8, cy); ctx.closePath(); ctx.fill(); ctx.stroke();
 }
 const DIRT = ['#c99b5f', '#a87c48'];
+/** A ready-made design ('dz:name') or one the player saved ('my:3'). */
+function designFor(id) {
+  if (!id) return null;
+  if (id.startsWith('dz:')) return DESIGNS[id.slice(3)] || null;
+  if (id.startsWith('my:')) return ui.hooks.designs()[+id.slice(3)] || null;
+  return null;
+}
+// The whole layout of a design as a little line drawing in the coaster's own colour.
+function designThumb(ctx, d, w, h) {
+  if (!d) return;
+  const pal = TRACK_COLORS[d.col | 0], col = pal ? pal[0] : COASTERS[d.ctype].rail;
+  const pts = designShape(d).map(([x, y, z]) => [(x - y), (x + y) * 0.5 - z * 0.5]);
+  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+  for (const [x, y] of pts) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+  const sc = Math.min((w - 8) / (x1 - x0 || 1), (h - 8) / (y1 - y0 || 1));
+  const X = (x) => w / 2 + (x - (x0 + x1) / 2) * sc, Y = (y) => h / 2 + (y - (y0 + y1) / 2) * sc;
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  for (const [lw, c] of [[4.2, 'rgba(43,45,66,0.55)'], [2.6, col]]) {
+    ctx.strokeStyle = c; ctx.lineWidth = lw;
+    ctx.beginPath(); ctx.moveTo(X(pts[0][0]), Y(pts[0][1]));
+    for (const [x, y] of pts) ctx.lineTo(X(x), Y(y));
+    ctx.stroke();
+  }
+  // the station
+  ctx.strokeStyle = '#2b2d42'; ctx.lineWidth = 5.5;
+  ctx.beginPath(); ctx.moveTo(X(pts[0][0]), Y(pts[0][1])); ctx.lineTo(X(3), Y(1.5)); ctx.stroke();
+}
 function itemThumb(kind, id, w, h) {
   return thumb(w, h, (ctx) => {
     if (kind === 'ride') thumbRide(ctx, id, w, h);
     else if (kind === 'stall') thumbStall(ctx, id, w, h);
     else if (kind === 'scenery') thumbScenery(ctx, SCN[id], w, h);
     else if (kind === 'coaster') coasterThumb(ctx, id, w, h);
+    else if (kind === 'design') designThumb(ctx, designFor(id), w, h);
     else if (id === 'pathtile') isoTile(ctx, w / 2, h / 2, w * 0.8, '#f1dfb5', ['#d9c08e', '#c2a877', 4]);
     else if (id === 'queuetile') { isoTile(ctx, w / 2, h / 2, w * 0.8, '#bfd8f0', ['#8fb0d2', '#7a9bbd', 4]); ctx.strokeStyle = '#3b8ed0'; ctx.lineWidth = 2; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(w * 0.3, h * 0.4); ctx.lineTo(w * 0.7, h * 0.6); ctx.stroke(); ctx.setLineDash([]); }
     else if (id === 'raise') { isoTile(ctx, w / 2, h / 2 + 4, w * 0.7, '#8cd45f', [...DIRT, 9]); arrowUpDown(ctx, w / 2, h / 2 - 6, true, '#ffd23f'); }
@@ -147,30 +176,49 @@ function trayItems() {
     case 'path': return [{ id: 'pathtile', kind: 'x', cost: 10, free: true }, { id: 'queuetile', kind: 'x', cost: 12, free: true }];
     case 'ride': return RIDE_ORDER.map((id) => ({ id, kind: 'ride', cost: RIDES[id].cost }));
     case 'stall': return STALL_ORDER.map((id) => ({ id, kind: 'stall', cost: STALLS[id].cost }));
-    case 'coaster': return COASTER_ORDER.map((id) => ({ id, kind: 'coaster', cost: COASTERS[id].station }));
+    case 'coaster': return [
+      ...COASTER_ORDER.map((id) => ({ id, kind: 'coaster', cost: COASTERS[id].station })),
+      ...DESIGN_ORDER.map((k) => ({ id: 'dz:' + k, kind: 'design', cost: designCost(DESIGNS[k]), name: t('dz_' + k), lock: DESIGNS[k].ctype })),
+      ...ui.hooks.designs().map((d, k) => ({ id: 'my:' + k, kind: 'design', cost: designCost(d), name: d.name, lock: d.ctype, mine: k })),
+    ];
     case 'scenery': return SCENERY_ORDER.map((id) => ({ id, kind: 'scenery', cost: SCENERY[SCN[id]].cost }));
     case 'terrain': return [['raise', 20], ['lower', 20], ['water', 30], ['fill', 30]].map(([id, cost]) => ({ id, kind: 'x', cost, free: true }));
     default: return [];
   }
 }
+const dzCost = new Map();
+/** Roughly what a design costs to build on flat ground (the real price shows when you place it). */
+function designCost(d) {
+  let c = dzCost.get(d.words);
+  if (c === undefined) {
+    const T = COASTERS[d.ctype];
+    c = T.station;
+    for (const w of d.words.split(' ')) c += T.piece * (w === 'loop' ? 5 : w === 'cork' ? 6 : w[0] === 'w' ? 2.4 : w === 'boost' ? 3 : w === 'brake' ? 1.5 : 1) * (w.includes('c') && w !== 'cork' ? 1.3 : 1) + 12;
+    c = Math.round(c / 50) * 50;
+    dzCost.set(d.words, c);
+  }
+  return c;
+}
 let traySig = '';
 function buildTray(force) {
   const items = trayItems();
-  const sig = ui.tool + '|' + lang + '|' + items.map((i) => (i.free || S.unlocked[i.id] ? 1 : 0)).join('');
+  const open = (i) => i.free || !!S.unlocked[i.lock || i.id];
+  const sig = ui.tool + '|' + lang + '|' + items.map((i) => (open(i) ? 1 : 0) + (i.name || '')).join('');
   els.tray.hidden = !items.length || !!ui.editing;
   if (sig !== traySig || force) {
     traySig = sig;
     els.tray.innerHTML = '';
     for (const it of items) {
-      const locked = !it.free && !S.unlocked[it.id];
+      const locked = !open(it);
       const b = document.createElement('button');
-      b.className = 'card' + (locked ? ' locked' : '');
+      b.className = 'card' + (locked ? ' locked' : '') + (it.kind === 'design' ? ' design' : '');
       b.dataset.item = it.id; b.dataset.cost = it.cost;
       b.appendChild(itemThumb(it.kind, it.id, 64, 50));
-      const nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = t('n_' + it.id);
+      const nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = it.name || t('n_' + it.id);
       const pr = document.createElement('div'); pr.className = 'pr';
       if (locked) pr.innerHTML = icon('lock') + esc(t('locked')); else pr.textContent = money(it.cost);
       b.append(nm, pr);
+      if (it.mine !== undefined) { const x = document.createElement('i'); x.className = 'del'; x.dataset.del = it.mine; x.innerHTML = icon('close'); b.appendChild(x); }
       els.tray.appendChild(b);
     }
     els.tray.scrollLeft = 0;
@@ -187,7 +235,7 @@ function updateInfo() {
   const it = ui.item;
   if (!ui.editing) {
     if (ui.tool === 'ride' && it) { const d = RIDES[it]; txt = t('i_stats', num(d.E, 1), num(d.I, 1), num(d.Q, 1), d.cap); }
-    else if (ui.tool === 'coaster' && it) txt = t('d_' + it);
+    else if (ui.tool === 'coaster' && it) { const dz = designFor(it); txt = dz ? t('i_design', num(dz.e || 0, 1), dz.w || '?', dz.h || '?') : t('d_' + it); }
     else if (ui.tool === 'stall' && it) txt = t('d_' + it);
     else if (ui.tool === 'scenery' && it) txt = t('i_beauty', SCENERY[SCN[it]].beauty) + ' ' + t(ui.touch ? 'i_line_touch' : 'i_line_mouse');
     else if (ui.tool === 'path') txt = (it === 'queuetile' ? t('i_queue') + ' ' : '') + t(ui.touch ? 'i_line_touch' : 'i_line_mouse');
@@ -201,7 +249,7 @@ export function selectTool(tool) {
   if (ui.editing) return;
   ui.tool = ui.tool === tool && tool !== 'inspect' ? 'inspect' : tool;
   ui.item = null; ui.ghost = null; ui.pending = null; ui.rot = 0; ui.handle = null; ui.area = null;
-  const items = trayItems().filter((i) => i.free || S.unlocked[i.id]);
+  const items = trayItems().filter((i) => i.free || S.unlocked[i.lock || i.id]);
   if (items.length && (ui.tool === 'path' || ui.tool === 'terrain' || ui.tool === 'scenery')) ui.item = items[0].id;
   if (ui.tool !== 'inspect') closePanel();
   markTool(); buildTray(); showConfirm();
@@ -209,11 +257,11 @@ export function selectTool(tool) {
 function selectItem(id) {
   const it = trayItems().find((i) => i.id === id);
   if (!it) return;
-  if (!it.free && !S.unlocked[id]) { toast(t('e_locked'), 'bad'); sfx('error'); return; }
+  if (!it.free && !S.unlocked[it.lock || id]) { toast(t('e_locked'), 'bad'); sfx('error'); return; }
   ui.item = ui.item === id && ui.tool !== 'path' && ui.tool !== 'terrain' ? null : id;
   ui.ghost = null; ui.pending = null; ui.rot = 0; ui.handle = null; ui.area = null;
   buildTray(); showConfirm(); sfx('click');
-  if (ui.tool === 'coaster' && ui.item) toast(t('b_station'));
+  if (ui.tool === 'coaster' && ui.item) toast(t(designFor(ui.item) ? 'b_design' : 'b_station'));
 }
 
 // ---------- ghosts: a preview of what the tool would do ----------
@@ -352,7 +400,12 @@ function ghostAt(tile) {
     }
     case 'coaster': {
       if (!ui.item) return null;
-      const s = stationFor(tile);
+      const s = stationFor(tile), dz = designFor(ui.item);
+      if (dz) {
+        // a whole ready-made coaster: show every tile it would cover
+        const chk = canPlaceDesign(dz, s.x, s.y, s.d);
+        return { kind: 'tiles', tiles: chk.tiles, ok: true, label: money(chk.cost), poor: chk.why === 'e_money', arrow: s, note: chk.ok && !pathBeside(chk.tiles.slice(0, 3)) ? t('g_nopath') : null };
+      }
       return { kind: 'station', ...s, ok: canStartCoaster(ui.item, s.x, s.y, s.d).ok, note: pathBeside([0, 1, 2].map((k) => [s.x + DX[s.d] * k, s.y + DY[s.d] * k])) ? null : t('g_nopath') };
     }
     case 'demolish': {
@@ -386,7 +439,17 @@ function applyTool(tile) {
     }
     case 'coaster': {
       if (!ui.item) return;
-      const s = stationFor(tile);
+      const s = stationFor(tile), dz = designFor(ui.item);
+      if (dz) {
+        r = placeDesign(dz, s.x, s.y, s.d);
+        if (r.ok) {
+          const c = r.obj;
+          c.capacity = coasterCap(c); c.open = c.sim.ok; S.pv++;
+          sfx('goal'); confetti(view.w, view.h, 60); flagAccess(c);
+          ui.item = null; ui.tool = 'inspect'; markTool(); openPanel('obj', c.id);
+        } else fail(r);
+        break;
+      }
       r = startCoaster(ui.item, s.x, s.y, s.d);
       if (r.ok) { sfx('place'); r.obj.capacity = coasterCap(r.obj); enterEditor(r.obj.id); } else fail(r);
       break;
@@ -531,7 +594,9 @@ function updateCands() {
 // the buttons keep the same distance on screen from the end of the track at any zoom
 function layoutHandles() {
   if (!ui.cands) return;
-  const d = (ui.touch ? 66 : 58) / cam.zoom;
+  // closer in when there is very little room between the bars (the small box on Toki)
+  const room = view.h - els.top.offsetHeight - els.bottom.offsetHeight;
+  const d = (room < 150 ? 50 : ui.touch ? 66 : 58) / cam.zoom;
   for (const q of ui.cands) { const k = q.kind ? 0.92 : 1; q.hx = q.bx + q.ax * d * k; q.hy = q.by + q.ay * d * k; }
 }
 function handleAt(px, py) {
@@ -595,7 +660,8 @@ function focusEnd(c) {
   // keep the end of the track, and the buttons round it, inside the free part of the screen
   const cy = (th + (view.h - bh)) / 2;
   const sx = (wx - cam.x) * cam.zoom + view.w / 2, sy = (wy - cam.y) * cam.zoom + view.h / 2;
-  const mx = Math.min(150, view.w * 0.3), my = Math.min(110, (view.h - bh - th) * 0.36);
+  const free = view.h - bh - th;
+  const mx = Math.min(150, view.w * 0.3), my = Math.max(Math.min(110, free * 0.36), Math.min(free / 2 - 3, 46));
   if (sx < mx || sx > view.w - mx || sy < th + my || sy > view.h - bh - my) {
     ui.camTarget = [wx, wy - (cy - view.h / 2) / cam.zoom];
   }
@@ -698,7 +764,7 @@ function panelHTML() {
     }
     h += '<div class="btns">';
     if (isC) h += `<button class="btn yellow" data-act="edit">${esc(t('edit_track'))}</button>`;
-    if (isC && usable) h += `<button class="btn flat" data-act="watch" data-k="watch"></button><button class="btn flat" data-act="test">${esc(t('test_ride'))}</button>`;
+    if (isC && usable) h += `<button class="btn flat" data-act="watch" data-k="watch"></button><button class="btn flat" data-act="test">${esc(t('test_ride'))}</button><button class="btn flat" data-act="savedz">${esc(t('design_save'))}</button>`;
     h += `<button class="btn flat" data-act="demolish">${esc(t('demolish'))}</button></div></div>`;
     return h;
   }
@@ -944,6 +1010,11 @@ function onPanel(e) {
       else if (startTest(o)) { ui.follow = o.id; els.testhud.hidden = false; sfx('whoosh'); }
     } else if (a === 'watch') {
       if (ui.follow === o.id) stopFollow(); else { ui.follow = o.id; els.testhud.hidden = false; }
+    } else if (a === 'savedz') {
+      const xs = o.pieces.map((q) => q.x), ys = o.pieces.map((q) => q.y), f = o.pieces[0].d % 2;
+      const sw = Math.max(...xs) - Math.min(...xs) + 1, sh = Math.max(...ys) - Math.min(...ys) + 1;
+      ui.hooks.saveDesign({ ...designOf(o), name: objName(o), e: o.E, w: f ? sh : sw, h: f ? sw : sh });
+      traySig = ''; toast(t('design_saved'), 'good');
     } else if (a === 'renovate') {
       const r = renovate(o);
       if (r.ok) { sfx('cash'); toast(t('renovated'), 'good'); const [x, y] = objCenter(o); burst(x, y - 20, 'star', 14); } else fail(r);
@@ -1426,7 +1497,12 @@ export function initUI(hooks) {
   }, { capture: true });
 
   els.tools.addEventListener('click', (e) => { const b = e.target.closest('button[data-tool]'); if (b) { sfx('click'); selectTool(b.dataset.tool); } });
-  els.tray.addEventListener('click', (e) => { const b = e.target.closest('button[data-item]'); if (b) selectItem(b.dataset.item); });
+  els.tray.addEventListener('click', (e) => {
+    const del = e.target.closest('[data-del]');
+    if (del) { ui.hooks.delDesign(+del.dataset.del); ui.item = null; ui.ghost = null; ui.pending = null; traySig = ''; buildTray(true); showConfirm(); sfx('remove'); return; }
+    const b = e.target.closest('button[data-item]');
+    if (b) selectItem(b.dataset.item);
+  });
   els.confirm.addEventListener('click', onConfirm);
   els.builder.addEventListener('click', onBuilder);
   els.panel.addEventListener('click', onPanel);

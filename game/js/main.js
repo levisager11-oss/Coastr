@@ -216,7 +216,14 @@ function toMenu() {
 }
 function demoView() { cam.zoom = view.w < 600 ? 0.75 : 1.05; centerOn(S.ent.x, S.ent.y - 12, 2); }
 
+// Coaster designs the player saved, shared by all parks (the newest eight are kept).
+const KEY_DZ = 'coastr.designs';
+let myDesigns = (load(KEY_DZ) || []).filter((d) => d && d.ctype && typeof d.words === 'string');
+
 const hooks = {
+  designs: () => myDesigns,
+  saveDesign(d) { myDesigns = [...myDesigns.filter((q) => q.words !== d.words || q.ctype !== d.ctype), d].slice(-8); store(KEY_DZ, myDesigns); },
+  delDesign(k) { myDesigns = myDesigns.filter((q, i) => i !== k); store(KEY_DZ, myDesigns); },
   music() { setMusic(!audio.music); saveSettings(); },
   sfx() { setSfx(!audio.sfx); saveSettings(); },
   lang() { setLang(lang === 'en' ? 'de' : 'en'); saveSettings(); if (playing) buildHUD(); else buildMenu(); },

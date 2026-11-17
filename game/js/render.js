@@ -857,9 +857,11 @@ function drawOverlays(ctx, time, ui) {
         outline(ctx, tl[0], tl[1], 1, 1, heff(idx(tl[0], tl[1])) + 0.03, FILL[k], STROKE[k]);
       }
       if (g.label && g.tiles.length) {
-        const tl = g.tiles[g.tiles.length - 1];
+        const tl = g.arrow ? g.tiles[1] : g.tiles[g.tiles.length - 1];
         if (inB(tl[0], tl[1])) pill(ctx, g.label, isoX(tl[0] + 0.5, tl[1] + 0.5), isoY(tl[0] + 0.5, tl[1] + 0.5, heff(idx(tl[0], tl[1]))) - 22 * s, g.poor ? '#d63a5f' : '#2b2d42', s);
       }
+      if (g.arrow && g.note && inB(g.arrow.x, g.arrow.y)) pill(ctx, g.note, isoX(g.arrow.x + 0.5 + DX[g.arrow.d], g.arrow.y + 0.5 + DY[g.arrow.d]), isoY(g.arrow.x + 0.5 + DX[g.arrow.d], g.arrow.y + 0.5 + DY[g.arrow.d], S.h[idx(g.arrow.x, g.arrow.y)]) + 30 * s, '#b97800', s);
+      if (g.arrow && inB(g.arrow.x, g.arrow.y)) arrow(ctx, g.arrow.x + 0.5 + DX[g.arrow.d] * 2.2, g.arrow.y + 0.5 + DY[g.arrow.d] * 2.2, S.h[idx(g.arrow.x, g.arrow.y)] + 0.4, g.arrow.d, '#fff');
     } else if (g.kind === 'box') {
       const z = inB(g.x, g.y) ? S.h[idx(g.x, g.y)] : 2;
       outline(ctx, g.x, g.y, g.w, g.h, z + 0.03, FILL[ok], STROKE[ok]);
