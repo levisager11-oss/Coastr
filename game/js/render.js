@@ -847,8 +847,9 @@ function drawOverlays(ctx, time, ui) {
   // ghost for the active tool
   const g = ui.ghost;
   if (g) {
-    const FILL = ['rgba(255,70,70,0.45)', 'rgba(80,230,140,0.4)'], STROKE = ['#ffe1e1', '#eafff2'];
-    const ok = g.ok ? 1 : 0;
+    const FILL = ['rgba(255,70,70,0.45)', 'rgba(80,230,140,0.4)', 'rgba(255,183,3,0.45)'], STROKE = ['#ffe1e1', '#eafff2', '#fff3cf'];
+    // amber: it can be built here, but there is a catch (g.note says what)
+    const ok = !g.ok ? 0 : g.note ? 2 : 1;
     if (g.kind === 'tiles') {
       for (const tl of g.tiles) {
         if (!inB(tl[0], tl[1])) continue;
@@ -875,6 +876,10 @@ function drawOverlays(ctx, time, ui) {
       }
       const ax = g.x + 0.5 + DX[g.d] * 2.2, ay = g.y + 0.5 + DY[g.d] * 2.2;
       if (inB(g.x, g.y)) arrow(ctx, ax, ay, S.h[idx(g.x, g.y)] + 0.4, g.d, '#fff');
+    }
+    if (g.note && g.ok && g.kind !== 'tiles' && inB(g.x, g.y)) {
+      const cx = g.kind === 'box' ? g.x + g.w / 2 : g.x + 0.5 + DX[g.d], cy = g.kind === 'box' ? g.y + g.h / 2 : g.y + 0.5 + DY[g.d];
+      pill(ctx, g.note, isoX(cx, cy), isoY(cx, cy, S.h[idx(g.x, g.y)]) + 34 * s, '#b97800', s);
     }
   }
   // the tile you can drag from to draw a line or an area

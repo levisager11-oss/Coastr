@@ -324,6 +324,15 @@ function doUndo() {
   buildTray();
 }
 
+/** Is there a path beside any of these tiles? Guests can only reach things that stand next to one. */
+function pathBeside(tiles) {
+  for (const [x, y] of tiles) for (let d = 0; d < 4; d++) {
+    const ax = x + DX[d], ay = y + DY[d];
+    if (inB(ax, ay) && S.path[idx(ax, ay)]) return true;
+  }
+  return false;
+}
+const boxList = (b) => { const out = []; for (let j = 0; j < b.h; j++) for (let i = 0; i < b.w; i++) out.push([b.x + i, b.y + j]); return out; };
 function ghostAt(tile) {
   if (!tile || ui.editing) return null;
   const { x, y } = tile;
@@ -334,17 +343,17 @@ function ghostAt(tile) {
       if (!ui.item) return null;
       const b = boxFor(tile), type = ui.item, rot = ui.rot;
       const o = { type, w: b.w, h: b.h, z: 0, anim: 0.5, spin: 0, riders: [], st: 'idle' };
-      return { kind: 'box', ...b, ok: canPlaceBox(b.x, b.y, b.w, b.h, RIDES[type].cost).ok, draw: (ctx) => drawRide(ctx, o, 0), rot };
+      return { kind: 'box', ...b, ok: canPlaceBox(b.x, b.y, b.w, b.h, RIDES[type].cost).ok, draw: (ctx) => drawRide(ctx, o, 0), rot, note: pathBeside(boxList(b)) ? null : t('g_nopath') };
     }
     case 'stall': {
       if (!ui.item) return null;
       const type = ui.item;
-      return { kind: 'box', x, y, w: 1, h: 1, ok: canPlaceBox(x, y, 1, 1, STALLS[type].cost).ok, draw: (ctx) => drawStall(ctx, { type, x: 0 }, 0) };
+      return { kind: 'box', x, y, w: 1, h: 1, ok: canPlaceBox(x, y, 1, 1, STALLS[type].cost).ok, draw: (ctx) => drawStall(ctx, { type, x: 0 }, 0), note: pathBeside([[x, y]]) ? null : t('g_nopath') };
     }
     case 'coaster': {
       if (!ui.item) return null;
       const s = stationFor(tile);
-      return { kind: 'station', ...s, ok: canStartCoaster(ui.item, s.x, s.y, s.d).ok };
+      return { kind: 'station', ...s, ok: canStartCoaster(ui.item, s.x, s.y, s.d).ok, note: pathBeside([0, 1, 2].map((k) => [s.x + DX[s.d] * k, s.y + DY[s.d] * k])) ? null : t('g_nopath') };
     }
     case 'demolish': {
       const w = whatAt(x, y);
@@ -1409,7 +1418,12 @@ export function initUI(hooks) {
   window.addEventListener('keydown', onKey);
   window.addEventListener('keyup', onKey);
   window.addEventListener('blur', () => keys.clear());
-  document.addEventListener('pointerdown', unlock, { capture: true });
+  // know from the very first tap (also one on a menu button) whether this is a finger or a mouse
+  document.addEventListener('pointerdown', (e) => {
+    unlock();
+    const touch = e.pointerType === 'touch';
+    if (touch !== ui.touch) { ui.touch = touch; lastTut = -1; if (!els.hud.hidden) { updateInfo(); tutorial(); } }
+  }, { capture: true });
 
   els.tools.addEventListener('click', (e) => { const b = e.target.closest('button[data-tool]'); if (b) { sfx('click'); selectTool(b.dataset.tool); } });
   els.tray.addEventListener('click', (e) => { const b = e.target.closest('button[data-item]'); if (b) selectItem(b.dataset.item); });
