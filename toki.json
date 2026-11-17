@@ -1,0 +1,44 @@
+{
+  "title": "Coastr",
+  "slug": "coastr",
+  "description": "Build your own theme park! Lay paths, place rides and food stalls, and design roller coasters piece by piece with lift hills, steep drops, loops and boosters. Every coaster gets excitement, intensity and nausea ratings as soon as its track is complete, and you can send a test train round to watch it run. Keep your guests happy, set prices, research new rides and grow your park in career mode, or build freely in the sandbox.",
+  "description_de": "Bau deinen eigenen Freizeitpark! Leg Wege an, stell Attraktionen und Essensstände auf und entwirf Achterbahnen Stück für Stück mit Lifthügeln, steilen Abfahrten, Loopings und Boostern. Jede Bahn bekommt Wertungen für Spannung, Intensität und Übelkeit, sobald die Strecke fertig ist, und du kannst einen Testzug auf die Runde schicken. Halte deine Gäste bei Laune, leg Preise fest, erforsche neue Attraktionen und lass deinen Park in der Karriere wachsen, oder bau frei drauflos.",
+  "controls": "Mouse: drag to move the map, scroll to zoom, click to build. Touch: drag to move, pinch to zoom, tap to build (two fingers move the map while drawing paths). R turns a ride, Esc cancels, Space pauses.",
+  "category": "strategy",
+  "engine": "HTML5 Canvas (plain JavaScript)",
+  "version": "1.0",
+  "update_title": "Coastr opens its gates",
+  "notes": [
+    "First version of Coastr",
+    "Build coasters piece by piece with hills, loops, banked turns and boosters",
+    "9 rides, 5 stalls, 10 kinds of scenery and 3 coaster types",
+    "Career mode with goals and research, plus a free sandbox",
+    "Plays with mouse or touch, in English and German"
+  ],
+  "cover_image": "cover.png",
+  "screenshots": ["shots/1.png", "shots/2.png", "shots/3.png"],
+  "score_order": "high",
+  "score_format": "points",
+  "folder": "game",
+  "entry": "index.html",
+  "boards": [
+    { "id": "", "name": "Park value", "name_de": "Parkwert" },
+    { "id": "guests", "name": "Most guests at once", "name_de": "Meiste Gäste gleichzeitig", "score_order": "high", "score_format": "points" }
+  ],
+  "achievements": [
+    { "id": "first-ride", "name": "First ride", "name_de": "Erste Attraktion", "description": "Open your first ride for guests.", "description_de": "Öffne deine erste Attraktion für Gäste.", "icon": "🎠" },
+    { "id": "first-coaster", "name": "Coaster builder", "name_de": "Achterbahnbauer", "description": "Finish and open your first coaster.", "description_de": "Bau deine erste Achterbahn fertig und öffne sie.", "icon": "🎢" },
+    { "id": "guests-50", "name": "Getting busy", "name_de": "Es wird voll", "description": "Have 50 guests in your park at once.", "description_de": "Hab 50 Gäste gleichzeitig im Park.", "icon": "👪" },
+    { "id": "guests-150", "name": "Crowd puller", "name_de": "Publikumsmagnet", "description": "Have 150 guests in your park at once.", "description_de": "Hab 150 Gäste gleichzeitig im Park.", "icon": "🎉" },
+    { "id": "guests-300", "name": "Full house", "name_de": "Volles Haus", "description": "Have 300 guests in your park at once.", "description_de": "Hab 300 Gäste gleichzeitig im Park.", "icon": "🏟️" },
+    { "id": "looping", "name": "Upside down", "name_de": "Kopfüber", "description": "Open a coaster with a loop.", "description_de": "Öffne eine Achterbahn mit Looping.", "icon": "🌀" },
+    { "id": "thrill-maker", "name": "Thrill maker", "name_de": "Nervenkitzel", "description": "Open a coaster with excitement 7 or more.", "description_de": "Öffne eine Achterbahn mit Spannung 7 oder mehr.", "icon": "⚡" },
+    { "id": "sky-high", "name": "Sky high", "name_de": "Himmelhoch", "description": "Open a coaster that climbs 40 metres above its station.", "description_de": "Öffne eine Achterbahn, die 40 Meter über ihre Station steigt.", "icon": "🚀" },
+    { "id": "rating-800", "name": "Five stars", "name_de": "Fünf Sterne", "description": "Reach a park rating of 800.", "description_de": "Erreiche eine Parkwertung von 800.", "icon": "⭐" },
+    { "id": "gardener", "name": "Gardener", "name_de": "Gärtner", "description": "Have 200 trees, flowers and other scenery in your park.", "description_de": "Hab 200 Bäume, Blumen und andere Deko in deinem Park.", "icon": "🌳" },
+    { "id": "lake", "name": "Lake builder", "name_de": "Seebauer", "description": "Have 60 tiles of water in your park.", "description_de": "Hab 60 Felder Wasser in deinem Park.", "icon": "💧" },
+    { "id": "scientist", "name": "Scientist", "name_de": "Forscher", "description": "Research everything there is.", "description_de": "Erforsche alles, was es gibt.", "icon": "🔬" },
+    { "id": "tycoon", "name": "Tycoon", "name_de": "Tycoon", "description": "Reach a park value of $250,000.", "description_de": "Erreiche einen Parkwert von $250.000.", "icon": "💰" },
+    { "id": "career-done", "name": "Career complete", "name_de": "Karriere geschafft", "description": "Reach every goal in career mode.", "description_de": "Erreiche alle Ziele der Karriere.", "icon": "🏆" }
+  ]
+}

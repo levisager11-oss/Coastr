@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#8fd3ff">
+<title>Coastr</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="c" aria-label="Park"></canvas>
+
+<div id="hud" hidden>
+  <div id="top">
+    <div class="stats">
+      <button class="pill" id="st-cash" data-open="finance"></button>
+      <button class="pill" id="st-guests" data-open="goals"></button>
+      <button class="pill" id="st-rating" data-open="goals"></button>
+      <div class="pill quiet" id="st-date"></div>
+    </div>
+    <div class="ctrl">
+      <button class="btn go" id="b-open"></button>
+      <div class="seg" id="speed"></div>
+      <button class="btn icon" id="b-goals" data-open="goals"></button>
+      <button class="btn icon" id="b-research" data-open="research"></button>
+      <button class="btn icon" id="b-menu" data-open="settings"></button>
+    </div>
+  </div>
+  <div id="notes">
+    <div id="testhud" hidden></div>
+    <div id="tutorial" hidden></div>
+    <div id="toasts"></div>
+  </div>
+  <div id="panel" hidden></div>
+  <div id="bottom">
+    <div id="confirm" hidden></div>
+    <div id="builder" hidden></div>
+    <div id="tray" hidden></div>
+    <div id="tools"></div>
+  </div>
+</div>
+
+<div id="menu"></div>
+<div id="modal" hidden></div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
