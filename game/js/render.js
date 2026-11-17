@@ -362,7 +362,7 @@ export function render(ctx, time, ui) {
       const v = c.sim.v[Math.min(c.sim.segs, tp.k)] || 0;
       const car = {
         car: 1, c, x: tp.x, y: tp.y, z: tp.z, tx: tp.tx, ty: tp.ty, tz: tp.tz, sx, sy, sz, d: tp.x + tp.y + 0.01,
-        riders: Math.min(2, riders), first: j === 0, j, time, fun: moving && v > 9 && p.t !== 'station' && !p.chain ? 1 : 0,
+        riders: Math.min(2, riders), first: j === 0, last: j === T.cars - 1, n: T.cars, j, time, v, fun: moving && v > 9 && p.t !== 'station' && !p.chain ? 1 : 0,
       };
       riders -= 2;
       const tx = Math.max(0, Math.min(N - 1, Math.floor(tp.x))), ty = Math.max(0, Math.min(N - 1, Math.floor(tp.y)));
