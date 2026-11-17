@@ -70,7 +70,7 @@ const en = {
   p_thoughts: 'What guests are saying', p_none: 'No guests yet. Open the park!', p_peak: 'Most guests at once',
   p_tip_rides: 'More and better rides bring more guests.', ach: 'Achievement: {0}',
 
-  e_bounds: 'That is outside the park.', e_same: '', e_water: 'You cannot build on water.', e_blocked: 'Something is in the way.',
+  e_bounds: 'That is outside the park.', e_same: '', e_water: 'You cannot build that on water.', e_blocked: 'Something is in the way.',
   e_track: 'A coaster track is in the way.', e_money: 'Not enough money.', e_flat: 'This needs flat ground.',
   e_entrance: 'The entrance has to stay.', e_limit: 'The land cannot go further.', e_none: '',
   e_steep: 'This coaster cannot do steep slopes.', e_steepturn: 'Turns can only slope gently.', e_noloop: 'This coaster cannot do loops.',
@@ -109,6 +109,7 @@ const en = {
   r_slide: 'Spiral Slide', r_maze: 'Hedge Maze', r_tower: 'Lookout Tower', r_coffee: 'Coffee Bar and Hat Shop', r_octopus: 'Octopus',
   r_tumbler: 'Tumbler', r_launch: 'Launch Coaster', r_slingshot: 'Slingshot',
   // building
+  n_queuetile: 'Queue line', i_queue: 'Lay it from the entrance of a ride: guests line up on it, and a longer line holds more of them.',
   i_stats: 'Excitement {0} · Intensity {1} · Nausea {2} · {3} seats', i_beauty: 'Makes the park prettier (+{0}).',
   i_line_mouse: 'Drag to draw a line.', i_line_touch: 'Tap to build. Then drag from the white dot to draw a line.',
   i_area_mouse: 'Drag to do a whole area.', i_area_touch: 'Tap a tile. Then drag from the white dot to do a whole area.',
@@ -137,7 +138,7 @@ const en = {
   help_title: 'How to play',
   help: [
     ['Move around', 'Drag the map to move. Scroll or pinch to zoom. Arrow keys or WASD work too.'],
-    ['Build your park', 'Rides and stalls must stand next to a path, or guests cannot reach them. Guests need food, drinks and toilets. Drag to build a whole line of path or change a whole area of land. Undo takes back the last thing you built.'],
+    ['Build your park', 'Rides and stalls must stand next to a path, or guests cannot reach them. Paths cross water as bridges. A queue line in front of a ride holds more waiting guests. Guests need food, drinks and toilets. Drag to build a whole line of path or change a whole area of land. Undo takes back the last thing you built.'],
     ['Build a coaster', 'Place the station, then tap the yellow arrows on the map to add track: left, straight or right. The small arrows make it steeper or flatter. Use a lift to pull the train up, then let it roll. The track must come back to the station. Finish for me builds the way back.'],
     ['Ratings', 'Every coaster gets ratings as soon as the track is complete. Speed, drops, airtime, loops and corkscrews make it exciting. Fast tight turns make it too intense: use wide or banked turns. Red dots show the rough spots.'],
     ['Money', 'Set prices by tapping a ride. Tap your cash to change the entry ticket, take a loan or advertise. If guests say something is too expensive, lower the price.'],
@@ -230,7 +231,7 @@ const de = {
   p_thoughts: 'Was die Gäste sagen', p_none: 'Noch keine Gäste. Öffne den Park!', p_peak: 'Meiste Gäste gleichzeitig',
   p_tip_rides: 'Mehr und bessere Attraktionen bringen mehr Gäste.', ach: 'Erfolg: {0}',
 
-  e_bounds: 'Das liegt nicht mehr im Park.', e_same: '', e_water: 'Auf Wasser kannst du nicht bauen.', e_blocked: 'Da ist etwas im Weg.',
+  e_bounds: 'Das liegt nicht mehr im Park.', e_same: '', e_water: 'Das kannst du nicht auf Wasser bauen.', e_blocked: 'Da ist etwas im Weg.',
   e_track: 'Da ist eine Achterbahn im Weg.', e_money: 'Nicht genug Geld.', e_flat: 'Das braucht ebenen Boden.',
   e_entrance: 'Der Eingang muss bleiben.', e_limit: 'Weiter geht das Land nicht.', e_none: '',
   e_steep: 'Diese Bahn kann keine steilen Stücke.', e_steepturn: 'Kurven gehen nur mit sanfter Steigung.', e_noloop: 'Diese Bahn kann keine Loopings.',
@@ -269,6 +270,7 @@ const de = {
   r_slide: 'Rutschturm', r_maze: 'Irrgarten', r_tower: 'Aussichtsturm', r_coffee: 'Kaffeebar und Hutladen', r_octopus: 'Krake',
   r_tumbler: 'Überschlag', r_launch: 'Katapultbahn', r_slingshot: 'Katapult',
   // building
+  n_queuetile: 'Warteschlange', i_queue: 'Leg sie vom Eingang einer Attraktion aus: Gäste stellen sich darauf an, und eine längere Schlange fasst mehr.',
   i_stats: 'Spannung {0} · Intensität {1} · Übelkeit {2} · {3} Plätze', i_beauty: 'Macht den Park schöner (+{0}).',
   i_line_mouse: 'Zieh, um eine Linie zu bauen.', i_line_touch: 'Tipp zum Bauen. Zieh dann vom hellen Punkt aus eine Linie.',
   i_area_mouse: 'Zieh, um eine ganze Fläche zu bearbeiten.', i_area_touch: 'Tipp auf ein Feld. Zieh dann vom hellen Punkt aus eine Fläche.',
@@ -297,7 +299,7 @@ const de = {
   help_title: 'So wird gespielt',
   help: [
     ['Bewegen', 'Zieh die Karte, um dich zu bewegen. Scroll oder nutze zwei Finger zum Zoomen. Pfeiltasten oder WASD gehen auch.'],
-    ['Park bauen', 'Attraktionen und Stände müssen neben einem Weg stehen, sonst kommen Gäste nicht hin. Gäste brauchen Essen, Getränke und Toiletten. Zieh, um einen ganzen Weg oder eine ganze Fläche auf einmal zu bauen. Zurück nimmt das Letzte wieder weg.'],
+    ['Park bauen', 'Attraktionen und Stände müssen neben einem Weg stehen, sonst kommen Gäste nicht hin. Über Wasser werden Wege zu Brücken. Eine Warteschlange vor einer Attraktion fasst mehr wartende Gäste. Gäste brauchen Essen, Getränke und Toiletten. Zieh, um einen ganzen Weg oder eine ganze Fläche auf einmal zu bauen. Zurück nimmt das Letzte wieder weg.'],
     ['Achterbahn bauen', 'Stell die Station hin und tipp dann auf die gelben Pfeile auf der Karte: links, gerade oder rechts. Mit den kleinen Pfeilen wird die Strecke steiler oder flacher. Ein Lift zieht den Zug hoch, danach rollt er von allein. Die Strecke muss zur Station zurückführen. Fertig bauen baut den Rückweg für dich.'],
     ['Wertungen', 'Jede Bahn bekommt Wertungen, sobald die Strecke fertig ist. Tempo, Abfahrten, Airtime, Loopings und Schrauben machen sie spannend. Schnelle enge Kurven machen sie zu heftig: nimm weite Kurven oder Steilkurven. Rote Punkte zeigen die heftigen Stellen.'],
     ['Geld', 'Tipp auf eine Attraktion, um den Preis zu ändern. Tipp auf dein Geld für Eintritt, Kredit und Werbung. Wenn Gäste etwas zu teuer finden, senk den Preis.'],

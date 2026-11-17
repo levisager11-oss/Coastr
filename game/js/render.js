@@ -1,8 +1,8 @@
 // Isometric renderer: backdrop, terrain, paths, scenery, rides, coasters, guests, light and overlays.
 import { N, DX, DY, RIDES, SCN, COASTERS } from './data.js';
-import { S, idx, inB, accessTiles } from './world.js';
+import { S, idx, inB, accessTiles, walkH } from './world.js';
 import { posAt, trainDist, STATION_HEAD, CAR_LEN, endState, bankAt, corkAngle } from './coaster.js';
-import { guestPos } from './guests.js';
+import { guestPos, queueLine } from './guests.js';
 import { darkness } from './sim.js';
 import * as SP from './sprites.js';
 import { drawFxWorld, drawFxGlow, drawFxScreen, fxWet, fxSnow } from './fx.js';
@@ -33,7 +33,7 @@ export function pickTile(px, py) {
   for (let z = 9; z >= 0; z--) {
     const a = wx / HW, b = (wy + z * ZH) / HH;
     const x = Math.floor((a + b) / 2), y = Math.floor((b - a) / 2);
-    if (inB(x, y) && S.h[idx(x, y)] >= z) return { x, y };
+    if (inB(x, y) && walkH(idx(x, y)) >= z) return { x, y };
   }
   const a = wx / HW, b = (wy + 2 * ZH) / HH;
   const x = Math.floor((a + b) / 2), y = Math.floor((b - a) / 2);
@@ -324,18 +324,20 @@ export function render(ctx, time, ui) {
   if (queuePv !== S.pv) { queueSpot.clear(); queuePv = S.pv; }
   for (const id in S.objs) {
     const c = S.objs[id];
-    // people waiting stand in a little crowd on the path by the entrance of the ride
+    // people waiting stand along the ride's queue line, or in a little crowd by its entrance if it has none
     if (c.kind !== 'stall' && c.queue.length && S.gmap) {
+      const line = queueLine(c);
       let spot = queueSpot.get(c.id);
       if (spot === undefined) { const a = accessTiles(c); spot = a.length ? a[0] : -1; queueSpot.set(c.id, spot); }
-      if (spot >= 0) {
-        const qx = spot % N, qy = (spot / N) | 0, qz = S.h[spot];
-        for (let k = 0; k < Math.min(12, c.queue.length); k++) {
-          const g = S.gmap.get(c.queue[k]);
-          if (!g) continue;
-          const x = qx + 0.2 + (k % 4) * 0.2, y = qy + 0.25 + ((k / 4) | 0) * 0.25;
-          addBucket(spot, { g, x, y, z: qz, d: x + y });
-        }
+      const shown = line.length ? Math.min(c.queue.length, line.length * 4 + 8) : Math.min(12, c.queue.length);
+      for (let k = 0; k < shown; k++) {
+        const g = S.gmap.get(c.queue[k]);
+        if (!g) continue;
+        const ti = line.length ? line[Math.min(line.length - 1, k >> 2)] : spot;
+        if (ti < 0) break;
+        const kk = line.length && (k >> 2) >= line.length ? k - (line.length - 1) * 4 : line.length ? k & 3 : k;
+        const x = (ti % N) + 0.26 + (kk % 3) * 0.24 + ((kk / 3) | 0) % 2 * 0.1, y = ((ti / N) | 0) + 0.26 + ((kk / 3) | 0) * 0.22;
+        addBucket(ti, { g, x, y, z: walkH(ti), d: x + y });
       }
     }
     if (c.kind !== 'coaster' || !c.sim || c.sim.L < 13) continue;
@@ -566,7 +568,8 @@ function drawTile(ctx, TH, x, y, i, he, sx, sy, time, detail) {
       if (!wA) { ctx.moveTo(sx - 2, sy + 2 + o); ctx.lineTo(sx - HW + 4, sy + HH - 1 + o); }
       ctx.stroke();
     }
-    const ph = detail ? (time * 0.6 + hash(x, y) * 6) % 3 : 9;
+    const ph = detail && !path ? (time * 0.6 + hash(x, y) * 6) % 3 : 9;
+    if (path) bridge(ctx, TH, x, y, i, sx, isoY(x, y, S.h[i] + 1), path === 2);
     if (ph < 1.6) {
       ctx.strokeStyle = `rgba(255,255,255,${0.55 * Math.sin((ph / 1.6) * Math.PI)})`; ctx.lineWidth = 1.4; ctx.lineCap = 'round';
       const ox = (hash(y, x) - 0.5) * 24, oy = HH + (hash(x + 9, y) - 0.5) * 10;
@@ -576,7 +579,7 @@ function drawTile(ctx, TH, x, y, i, he, sx, sy, time, detail) {
   }
   const hs = hash(x, y);
   if (path) {
-    ctx.fillStyle = (x + y) & 1 ? TH.path : TH.pathB; ctx.fill();
+    ctx.fillStyle = path === 2 ? ((x + y) & 1 ? QUEUE[0] : QUEUE[1]) : (x + y) & 1 ? TH.path : TH.pathB; ctx.fill();
     if (detail) {
       // paving joints
       ctx.strokeStyle = 'rgba(90,60,30,0.1)'; ctx.lineWidth = 1;
@@ -585,7 +588,13 @@ function drawTile(ctx, TH, x, y, i, he, sx, sy, time, detail) {
       ctx.moveTo(sx + HW / 2, sy + HH / 2); ctx.lineTo(sx - HW / 2, sy + HH * 1.5);
       ctx.stroke();
     }
-    ctx.strokeStyle = TH.pathEdge; ctx.lineWidth = 1.8; ctx.lineCap = 'round';
+    if (path === 2) {
+      // a rope down the middle shows this is a queue line
+      ctx.strokeStyle = QUEUE[2]; ctx.lineWidth = 1.4; ctx.setLineDash([3, 4]);
+      ctx.beginPath(); ctx.moveTo(sx - HW / 2, sy + HH / 2); ctx.lineTo(sx + HW / 2, sy + HH * 1.5); ctx.moveTo(sx + HW / 2, sy + HH / 2); ctx.lineTo(sx - HW / 2, sy + HH * 1.5); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.strokeStyle = path === 2 ? QUEUE[2] : TH.pathEdge; ctx.lineWidth = path === 2 ? 2.4 : 1.8; ctx.lineCap = 'round';
     ctx.beginPath();
     const P = (xx, yy) => S.path[idx(xx, yy)] || S.occ[idx(xx, yy)];
     if (!(y > 0 && P(x, y - 1))) { ctx.moveTo(sx + 1, sy + 1); ctx.lineTo(sx + HW - 1, sy + HH); }
@@ -621,6 +630,37 @@ function drawTile(ctx, TH, x, y, i, he, sx, sy, time, detail) {
     if (tA) { ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx - HW, sy + HH); ctx.lineTo(sx - HW + 8, sy + HH + 4); ctx.lineTo(sx + 8, sy + 4); ctx.fill(); }
     if (tB) { ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx + HW, sy + HH); ctx.lineTo(sx + HW - 8, sy + HH + 4); ctx.lineTo(sx - 8, sy + 4); ctx.fill(); }
   }
+}
+
+const QUEUE = ['#c4dbf1', '#b8d1ea', '#4f8fcf']; // queue line: two paving shades and the rope colour
+// A wooden bridge deck one level above the water, with railings on the open sides and posts into the water.
+function bridge(ctx, TH, x, y, i, sx, sy, queue) {
+  const P = (xx, yy) => inB(xx, yy) && S.path[idx(xx, yy)];
+  ctx.strokeStyle = '#7a5a3a'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.beginPath();
+  for (const [px, py] of [[sx - HW + 6, sy + HH], [sx + HW - 6, sy + HH], [sx, sy + HH * 2 - 3]]) { ctx.moveTo(px, py); ctx.lineTo(px, py + 15); }
+  ctx.stroke();
+  ctx.fillStyle = '#8a6540';
+  ctx.beginPath(); ctx.moveTo(sx - HW, sy + HH); ctx.lineTo(sx, sy + HH * 2); ctx.lineTo(sx, sy + HH * 2 + 4); ctx.lineTo(sx - HW, sy + HH + 4); ctx.fill();
+  ctx.fillStyle = '#74532f';
+  ctx.beginPath(); ctx.moveTo(sx + HW, sy + HH); ctx.lineTo(sx, sy + HH * 2); ctx.lineTo(sx, sy + HH * 2 + 4); ctx.lineTo(sx + HW, sy + HH + 4); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx + HW, sy + HH); ctx.lineTo(sx, sy + HH * 2); ctx.lineTo(sx - HW, sy + HH); ctx.closePath();
+  ctx.fillStyle = queue ? QUEUE[(x + y) & 1] : (x + y) & 1 ? '#d9b383' : '#d0a877'; ctx.fill();
+  if (fine) {
+    ctx.strokeStyle = 'rgba(90,60,30,0.22)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let k = 1; k < 4; k++) { ctx.moveTo(sx - HW + k * 16, sy + HH - k * 8 + 16 * 0 + 0); ctx.lineTo(sx - HW + k * 16 + HW, sy + HH - k * 8 + HH); }
+    ctx.stroke();
+  }
+  // railings where the bridge does not carry on
+  ctx.strokeStyle = queue ? QUEUE[2] : '#f4f1ea'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  const rail = (ax, ay, bx, by) => { ctx.moveTo(ax, ay - 9); ctx.lineTo(bx, by - 9); ctx.moveTo(ax, ay); ctx.lineTo(ax, ay - 9); ctx.moveTo(bx, by); ctx.lineTo(bx, by - 9); };
+  if (!P(x, y - 1)) rail(sx + 2, sy + 1, sx + HW - 2, sy + HH);
+  if (!P(x - 1, y)) rail(sx - 2, sy + 1, sx - HW + 2, sy + HH);
+  if (!P(x + 1, y)) rail(sx + HW - 2, sy + HH, sx + 2, sy + HH * 2 - 1);
+  if (!P(x, y + 1)) rail(sx - HW + 2, sy + HH, sx - 2, sy + HH * 2 - 1);
+  ctx.stroke();
 }
 
 function stairs(ctx, x0, y0, x1, y1, dh, col) {

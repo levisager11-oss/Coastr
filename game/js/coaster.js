@@ -1,7 +1,7 @@
 // Coaster tracks: pieces, geometry, physics and ratings.
 import { N, DX, DY, COASTERS, SCENERY } from './data.js';
 import {
-  S, idx, inB, canAfford, spend, earn, registerPiece, unregisterPiece, nameFor, emit, pieceCells, pieceTiles,
+  S, idx, inB, canAfford, spend, earn, registerPiece, unregisterPiece, nameFor, emit, pieceCells, pieceTiles, walkH,
 } from './world.js';
 
 const OK = { ok: true };
@@ -85,7 +85,7 @@ function checkPiece(c, p, ignoreMoney) {
     const th = S.h[cell.i];
     if (cell.z0 < th) return no('e_ground');
     if (S.water[cell.i] && cell.z0 < th + 1) return no('e_water');
-    if (S.path[cell.i] && cell.z0 - th < 2) return no('e_pathclear');
+    if (S.path[cell.i] && cell.z0 - walkH(cell.i) < 2) return no('e_pathclear');
     const list = S.trk.get(cell.i);
     if (list) for (const s of list) if (cell.z0 < s.z1 + 3 && s.z0 < cell.z1 + 3) return no('e_track');
   }

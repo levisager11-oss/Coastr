@@ -173,7 +173,7 @@ export function accessTiles(o) {
       const ax = x + DX[d], ay = y + DY[d];
       if (!inB(ax, ay)) continue;
       const i = idx(ax, ay);
-      if (S.path[i] && Math.abs(S.h[i] - z) <= 1 && !seen.has(i)) { seen.add(i); out.push(i); }
+      if (S.path[i] && Math.abs(walkH(i) - z) <= 1 && !seen.has(i)) { seen.add(i); out.push(i); }
     }
   }
   return out;
@@ -192,23 +192,31 @@ export function assetValue() {
 export function parkValue() { return Math.round(assetValue() + (S.sandbox ? 0 : S.cash - S.loan)); }
 
 // ---------- paths ----------
-export function canPath(x, y) {
+/** Height guests walk at on a tile: a path over water is a bridge one level above the water's bed. */
+export const walkH = (i) => S.h[i] + (S.water[i] && S.path[i] ? 1 : 0);
+/** What a piece of path costs here. kind 1 = path, 2 = queue line; over water it is a bridge. */
+export function pathCost(x, y, kind = 1) {
+  const i = idx(x, y);
+  if (S.path[i]) return 2; // only changing its kind
+  return S.water[i] ? 30 : kind === 2 ? 12 : 10;
+}
+export function canPath(x, y, kind = 1) {
   if (!inB(x, y)) return no('e_bounds');
   const i = idx(x, y);
-  if (S.path[i]) return no('e_same');
-  if (S.water[i]) return no('e_water');
+  if (S.path[i] === kind) return no('e_same');
+  if (x === S.ent.x && y === S.ent.y) return no('e_entrance');
   if (S.occ[i]) return no('e_blocked');
-  if (minTrackZ(i) - S.h[i] < 2) return no('e_track');
-  if (!canAfford(10)) return no('e_money');
+  if (minTrackZ(i) - (S.h[i] + (S.water[i] ? 1 : 0)) < 2) return no('e_track');
+  if (!canAfford(pathCost(x, y, kind))) return no('e_money');
   return OK;
 }
-export function placePath(x, y) {
-  const r = canPath(x, y);
+export function placePath(x, y, kind = 1) {
+  const r = canPath(x, y, kind);
   if (!r.ok) return r;
-  const i = idx(x, y);
+  const i = idx(x, y), cost = pathCost(x, y, kind);
   if (S.scn[i]) { S.scn[i] = 0; S.sceneryCount--; }
-  S.path[i] = 1; S.pv++;
-  spend(10, 'build');
+  S.path[i] = kind; S.pv++;
+  spend(cost, 'build');
   return OK;
 }
 export function removePath(x, y) {

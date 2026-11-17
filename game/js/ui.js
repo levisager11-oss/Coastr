@@ -6,7 +6,7 @@ import {
 import {
   S, idx, inB, events, canPath, placePath, removePath, canPlaceBox, placeRide, placeStall, footprint, canScenery,
   placeScenery, removeScenery, canTerrain, terrain, canWater, setWater, whatAt, removeObj, objValue, accessTiles,
-  parkValue, canAfford, spend, earn, snapshot, restore,
+  parkValue, canAfford, spend, earn, snapshot, restore, pathCost,
 } from './world.js';
 import {
   canStartCoaster, startCoaster, addPiece, undoPiece, autoFinish, endState, previewPiece, posAt, trainDist, alterable, alterPiece, cutAfter,
@@ -109,6 +109,7 @@ function itemThumb(kind, id, w, h) {
     else if (kind === 'scenery') thumbScenery(ctx, SCN[id], w, h);
     else if (kind === 'coaster') coasterThumb(ctx, id, w, h);
     else if (id === 'pathtile') isoTile(ctx, w / 2, h / 2, w * 0.8, '#f1dfb5', ['#d9c08e', '#c2a877', 4]);
+    else if (id === 'queuetile') { isoTile(ctx, w / 2, h / 2, w * 0.8, '#bfd8f0', ['#8fb0d2', '#7a9bbd', 4]); ctx.strokeStyle = '#3b8ed0'; ctx.lineWidth = 2; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(w * 0.3, h * 0.4); ctx.lineTo(w * 0.7, h * 0.6); ctx.stroke(); ctx.setLineDash([]); }
     else if (id === 'raise') { isoTile(ctx, w / 2, h / 2 + 4, w * 0.7, '#8cd45f', [...DIRT, 9]); arrowUpDown(ctx, w / 2, h / 2 - 6, true, '#ffd23f'); }
     else if (id === 'lower') { isoTile(ctx, w / 2, h / 2 + 6, w * 0.7, '#7cc653', [...DIRT, 4]); arrowUpDown(ctx, w / 2, h / 2 - 4, false, '#ffd23f'); }
     else if (id === 'water') isoTile(ctx, w / 2, h / 2, w * 0.8, '#4fb8ee', [...DIRT, 5]);
@@ -143,7 +144,7 @@ function markTool() {
 }
 function trayItems() {
   switch (ui.tool) {
-    case 'path': return [{ id: 'pathtile', kind: 'x', cost: 10, free: true }];
+    case 'path': return [{ id: 'pathtile', kind: 'x', cost: 10, free: true }, { id: 'queuetile', kind: 'x', cost: 12, free: true }];
     case 'ride': return RIDE_ORDER.map((id) => ({ id, kind: 'ride', cost: RIDES[id].cost }));
     case 'stall': return STALL_ORDER.map((id) => ({ id, kind: 'stall', cost: STALLS[id].cost }));
     case 'coaster': return COASTER_ORDER.map((id) => ({ id, kind: 'coaster', cost: COASTERS[id].station }));
@@ -189,7 +190,7 @@ function updateInfo() {
     else if (ui.tool === 'coaster' && it) txt = t('d_' + it);
     else if (ui.tool === 'stall' && it) txt = t('d_' + it);
     else if (ui.tool === 'scenery' && it) txt = t('i_beauty', SCENERY[SCN[it]].beauty) + ' ' + t(ui.touch ? 'i_line_touch' : 'i_line_mouse');
-    else if (ui.tool === 'path') txt = t(ui.touch ? 'i_line_touch' : 'i_line_mouse');
+    else if (ui.tool === 'path') txt = (it === 'queuetile' ? t('i_queue') + ' ' : '') + t(ui.touch ? 'i_line_touch' : 'i_line_mouse');
     else if (ui.tool === 'terrain') txt = t(ui.touch ? 'i_area_touch' : 'i_area_mouse');
     else if (ui.tool === 'demolish') txt = t('i_demolish') + ' ' + t(ui.touch ? 'i_area_touch' : 'i_area_mouse');
   }
@@ -229,7 +230,7 @@ const areaTool = () => AREA_TOOLS[ui.tool] && (ui.item || ui.tool === 'demolish'
 /** What the current tool would do on one tile: {ok, cost, why}. */
 function canAt(x, y) {
   let r, cost = 0;
-  if (ui.tool === 'path') { r = canPath(x, y); cost = 10; }
+  if (ui.tool === 'path') { const kind = ui.item === 'queuetile' ? 2 : 1; r = canPath(x, y, kind); cost = pathCost(x, y, kind); }
   else if (ui.tool === 'scenery') { r = canScenery(SCN[ui.item], x, y); cost = SCENERY[SCN[ui.item]].cost; }
   else if (ui.tool === 'terrain') {
     if (ui.item === 'raise' || ui.item === 'lower') { r = canTerrain(x, y, ui.item === 'raise' ? 1 : -1); cost = 20; }
@@ -240,7 +241,7 @@ function canAt(x, y) {
   return { ok: false, cost: 0, why: r.why };
 }
 function applyOne(x, y) {
-  if (ui.tool === 'path') return placePath(x, y);
+  if (ui.tool === 'path') return placePath(x, y, ui.item === 'queuetile' ? 2 : 1);
   if (ui.tool === 'scenery') return placeScenery(SCN[ui.item], x, y);
   if (ui.tool === 'terrain') return ui.item === 'raise' ? terrain(x, y, 1) : ui.item === 'lower' ? terrain(x, y, -1) : setWater(x, y, ui.item === 'water');
   const w = whatAt(x, y);

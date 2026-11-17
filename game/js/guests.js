@@ -1,6 +1,6 @@
 // Guests: walking, needs, choosing rides, buying things, thoughts.
 import { N, DX, DY, RIDES, STALLS, SCN } from './data.js';
-import { S, idx, inB, accessTiles, earn } from './world.js';
+import { S, idx, inB, accessTiles, earn, walkH } from './world.js';
 
 const FIRST = ['Mia', 'Noah', 'Emma', 'Leon', 'Lina', 'Finn', 'Sofia', 'Luca', 'Hanna', 'Ben', 'Lea', 'Elias', 'Nora',
   'Jonas', 'Ella', 'Paul', 'Maya', 'Tim', 'Zoe', 'Max', 'Ida', 'Liam', 'Anna', 'Felix', 'Clara', 'Omar', 'Yuki', 'Ravi',
@@ -20,12 +20,12 @@ function bfs(sources) {
   while (q.length) {
     const next = [];
     for (const i of q) {
-      const x = i % N, y = (i / N) | 0, d = f[i] + 1, h = S.h[i];
+      const x = i % N, y = (i / N) | 0, d = f[i] + 1, h = walkH(i);
       for (let k = 0; k < 4; k++) {
         const nx = x + DX[k], ny = y + DY[k];
         if (!inB(nx, ny)) continue;
         const j = idx(nx, ny);
-        if (S.path[j] && f[j] < 0 && Math.abs(S.h[j] - h) <= 1) { f[j] = d; next.push(j); }
+        if (S.path[j] && f[j] < 0 && Math.abs(walkH(j) - h) <= 1) { f[j] = d; next.push(j); }
       }
     }
     q = next;
@@ -74,9 +74,37 @@ export function rideUsable(o) {
   if (o.kind === 'coaster') return o.closed && o.sim && o.sim.ok;
   return o.kind === 'ride';
 }
+// The queue line of a ride: queue-path tiles (kind 2) joined to its entrance, nearest first.
+let lines = new Map(), linesPv = -1;
+export function queueLine(o) {
+  if (linesPv !== S.pv) { lines = new Map(); linesPv = S.pv; }
+  let out = lines.get(o.id);
+  if (out) return out;
+  out = [];
+  const seen = new Set();
+  let q = accessTiles(o).filter((i) => S.path[i] === 2);
+  for (const i of q) seen.add(i);
+  while (q.length && out.length < 40) {
+    const next = [];
+    for (const i of q) {
+      out.push(i);
+      const x = i % N, y = (i / N) | 0;
+      for (let k = 0; k < 4; k++) {
+        const nx = x + DX[k], ny = y + DY[k];
+        if (!inB(nx, ny)) continue;
+        const j = idx(nx, ny);
+        if (S.path[j] === 2 && !seen.has(j) && Math.abs(walkH(j) - walkH(i)) <= 1) { seen.add(j); next.push(j); }
+      }
+    }
+    q = next;
+  }
+  lines.set(o.id, out);
+  return out;
+}
+/** How many guests may wait for a ride: a couple of loads, plus four for every tile of queue line. */
 export function queueMax(o) {
   const cap = o.kind === 'coaster' ? (o.capacity || 12) * (o.trains || 1) : RIDES[o.type].cap;
-  return cap * 2 + 4;
+  return cap * 2 + 4 + queueLine(o).length * 4;
 }
 
 // ---------- guests ----------
@@ -112,12 +140,12 @@ export function makeGuest(tx, ty) {
 
 function neighbors(tx, ty, out) {
   out.length = 0;
-  const h = S.h[idx(tx, ty)];
+  const h = walkH(idx(tx, ty));
   for (let k = 0; k < 4; k++) {
     const nx = tx + DX[k], ny = ty + DY[k];
     if (!inB(nx, ny)) continue;
     const j = idx(nx, ny);
-    if (S.path[j] && Math.abs(S.h[j] - h) <= 1) out.push(j);
+    if (S.path[j] && Math.abs(walkH(j) - h) <= 1) out.push(j);
   }
   return out;
 }
@@ -296,7 +324,9 @@ export function updateGuest(g, dt) {
   if (g.st === 'queue') {
     g.wait += dt;
     if (g.wait > 25) g.happy -= 0.1 * dt;
-    if (g.wait > 70 && Math.random() < 0.01) {
+    const o0 = S.objs[g.obj];
+    // a proper queue line makes the wait easier to bear
+    if (g.wait > (o0 && queueLine(o0).length ? 115 : 70) && Math.random() < 0.01) {
       const o = S.objs[g.obj];
       if (o) o.queue = o.queue.filter((id) => id !== g.id);
       think(g, 'th_wait', g.obj); g.happy -= 4; g.obj = 0; g.st = 'walk'; g.cool = 5;
@@ -339,7 +369,7 @@ export function guestPos(g, out) {
   let x = fx + (bx - fx) * t, y = fy + (by - fy) * t;
   // keep a personal sideways offset so guests do not walk in single file
   x += g.off * 0.8; y -= g.off * 0.8;
-  const za = S.h[idx(g.tx, g.ty)], zb = S.h[idx(g.nx, g.ny)];
+  const za = walkH(idx(g.tx, g.ty)), zb = walkH(idx(g.nx, g.ny));
   out.x = x; out.y = y; out.z = g.st === 'walk' ? za + (zb - za) * t : zb;
   return out;
 }
