@@ -38,7 +38,7 @@ const en = {
   demolish_q: 'Demolish {0}? You get {1} back.',
 
   g_happy: 'Happiness', g_hunger: 'Hunger', g_thirst: 'Thirst', g_toilet: 'Toilet', g_nausea: 'Nausea', g_energy: 'Energy',
-  g_cash: 'Pocket money', g_thoughts: 'Thoughts', g_rides: 'Rides taken', g_nothoughts: 'Nothing on their mind yet.',
+  g_cash: 'Pocket money', g_thoughts: 'Thoughts', g_ridden: 'Rides taken', g_nothoughts: 'Nothing on their mind yet.',
   g_gone: 'This guest has left the park.',
   th_great: '{0} was great!', th_wow: 'Wow, {0} was amazing!', th_sick: '{0} made me feel sick.',
   th_expensive: '{0} is too expensive.', th_wait: 'The queue for {0} is too long.', th_nofood: 'I am hungry and cannot find food.',
@@ -221,7 +221,7 @@ const de = {
   demolish_q: '{0} abbauen? Du bekommst {1} zurück.',
 
   g_happy: 'Laune', g_hunger: 'Hunger', g_thirst: 'Durst', g_toilet: 'Toilette', g_nausea: 'Übelkeit', g_energy: 'Energie',
-  g_cash: 'Taschengeld', g_thoughts: 'Gedanken', g_rides: 'Fahrten', g_nothoughts: 'Noch keine Gedanken.',
+  g_cash: 'Taschengeld', g_thoughts: 'Gedanken', g_ridden: 'Fahrten', g_nothoughts: 'Noch keine Gedanken.',
   g_gone: 'Dieser Gast hat den Park verlassen.',
   th_great: '{0} war super!', th_wow: 'Wow, {0} war der Wahnsinn!', th_sick: 'Von {0} ist mir schlecht geworden.',
   th_expensive: '{0} ist zu teuer.', th_wait: 'Die Schlange bei {0} ist zu lang.', th_nofood: 'Ich habe Hunger und finde nichts zu essen.',

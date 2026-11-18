@@ -124,6 +124,9 @@ TOKI_KEY="$TOKI_KEY" node /tmp/toki-upload.mjs .
   `canPlaceDesign`, `placeDesign` in `coaster.js`). The ready-made ones are `DESIGNS` in `data.js`;
   each must close on flat ground, so re-check them (build one with `placeDesign` in Node) after any
   change to piece geometry. Saved ones live in `localStorage` under `coastr.designs`.
+- No support (column or trestle bent) stands on a tile with a path or scenery: the track spans it.
+  So a piece's cached drawing also depends on those tiles; `geoFresh` in `track.js` checks the
+  tiles it looked at whenever `S.pv` changes.
 - Track and train pictures are in `track.js`. Its geometry cache (`piece.geo`) must hold everything
   that can be worked out once; drawing a piece should be a handful of fills and strokes.
 - Edit tracks through `addPiece` / `undoPiece` / `autoFinish`, which also clear the cached drawing

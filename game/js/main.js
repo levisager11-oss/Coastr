@@ -238,7 +238,7 @@ function buildMenu() {
   menuEl.innerHTML = `<div class="m-card"><div class="m-head">
     <div class="logo">Coast<i>r</i></div>
     <div class="tag">${t('tagline')}</div>
-    ${embedded && view.h < 420 ? `<div class="tip">${t('tip_fullscreen')}</div>` : ''}
+    ${embedded && view.h < 420 && view.w < 560 ? `<div class="tip">${t('tip_fullscreen')}</div>` : ''}
   </div><div class="m-list">
     ${lp ? `<div class="m-top"><button class="m-btn main" data-m="continue"><b>${t('m_continue')}</b><span>${esc(nameOf(lp.d))}${lp.d.mode === 'sandbox' ? ' · ' + t('m_sandbox') : ''}</span></button>
       <button class="m-btn parks" data-m="parks"><b>${icon('folder')}${t('m_parks')}</b><span>${t('m_parks_n', all.length, MAX_PARKS)}</span></button></div>` : ''}

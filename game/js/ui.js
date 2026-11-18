@@ -596,7 +596,7 @@ function layoutHandles() {
   if (!ui.cands) return;
   // closer in when there is very little room between the bars (the small box on Toki)
   const room = view.h - els.top.offsetHeight - els.bottom.offsetHeight;
-  const d = (room < 150 ? 50 : ui.touch ? 66 : 58) / cam.zoom;
+  const d = (room < 100 ? 42 : room < 150 ? 50 : ui.touch ? 66 : 58) / cam.zoom;
   for (const q of ui.cands) { const k = q.kind ? 0.92 : 1; q.hx = q.bx + q.ax * d * k; q.hy = q.by + q.ay * d * k; }
 }
 function handleAt(px, py) {
@@ -655,7 +655,9 @@ function refreshBuilder() {
 }
 function focusEnd(c) {
   const e = endState(c);
-  const wx = isoX(e.x + 0.5, e.y + 0.5), wy = isoY(e.x + 0.5, e.y + 0.5, e.h);
+  // the point the buttons on the map sit round (see updateCands), half a tile back from the end
+  const px = e.x + 0.5 - DX[e.d] * 0.5, py = e.y + 0.5 - DY[e.d] * 0.5;
+  const wx = isoX(px, py), wy = isoY(px, py, e.h + 0.3);
   const bh = els.bottom.offsetHeight, th = els.top.offsetHeight;
   // keep the end of the track, and the buttons round it, inside the free part of the screen
   const cy = (th + (view.h - bh)) / 2;
@@ -770,7 +772,7 @@ function panelHTML() {
   }
   if (p.type === 'guest') {
     return head(p.name || '') + `<div class="p-body">${meter('happy', t('g_happy'))}${meter('hunger', t('g_hunger'))}${meter('thirst', t('g_thirst'))}${meter('toilet', t('g_toilet'))}${meter('nausea', t('g_nausea'))}${meter('energy', t('g_energy'))}
-      <div class="facts">${fact('cash', t('g_cash'))}${fact('rides', t('g_rides'))}</div><h3>${esc(t('g_thoughts'))}</h3><ul class="list" data-k="thoughts"></ul></div>`;
+      <div class="facts">${fact('cash', t('g_cash'))}${fact('rides', t('g_ridden'))}</div><h3>${esc(t('g_thoughts'))}</h3><ul class="list" data-k="thoughts"></ul></div>`;
   }
   if (p.type === 'finance') {
     let h = head(t('finances')) + '<div class="p-body">';

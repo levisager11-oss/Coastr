@@ -52,9 +52,23 @@ function paint(ctx, L) {
 
 const clampN = (v) => Math.max(0, Math.min(N - 1, Math.floor(v)));
 const ground = (xt, yt) => heff(idx(clampN(xt), clampN(yt)));
+// Paths and scenery may lie under raised track. No support stands on such a tile: the track spans
+// it, so guests do not walk through a column and a fountain is not speared by one. The tiles looked
+// at are kept with the drawing, so it is rebuilt only when one of them changes.
+const busyAt = (i) => (S.path[i] || S.scn[i] ? 1 : 0);
+function geoFresh(g) {
+  if (!g || g.tv !== S.tv) return false;
+  if (g.pv !== S.pv) {
+    for (const [i, v] of g.seen) if (busyAt(i) !== v) return false;
+    g.pv = S.pv;
+  }
+  return true;
+}
 
 function buildGeo(c, pi) {
   const p = c.pieces[pi], sm = pieceSamples(c, pi), T = styleOf(c), type = c.ctype;
+  const seen = new Map();
+  const busy = (xt, yt) => { const i = idx(clampN(xt), clampN(yt)), v = busyAt(i); seen.set(i, v); return v; };
   const n = sm.length, last = n - 1, d = p.d, ed = exitDir(p);
   const cork = p.t === 'cork', loop = p.t === 'loop', inv = loop || cork, wide = p.t === 'wl' || p.t === 'wr';
   const station = p.t === 'station', W = GAUGE[type], SP = SPINE[type], wood = type === 'wood';
@@ -113,7 +127,7 @@ function buildGeo(c, pi) {
   // a round column from the ground up to zTop (levels), w pixels thick, on a flange foot
   const column = (s, xt, yt, zTop, w, foot) => {
     const g = ground(xt, yt);
-    if (zTop - g < 0.3) return false;
+    if (zTop - g < 0.3 || busy(xt, yt)) return false;
     const x = gx(xt, yt), y0 = gy(xt, yt, zTop), y1 = gy(xt, yt, g), h = w / 2;
     s.dark.moveTo(x + foot, y1); s.dark.ellipse(x, y1, foot, foot * 0.5, 0, 0, TAU);
     s.dark.rect(x - h, y0, w, y1 - y0);
@@ -168,7 +182,7 @@ function buildGeo(c, pi) {
     const o = k * 9, bx = F[o + 3] * BW, by = F[o + 4] * BW;
     const lx = (F[o] + bx) / 4, ly = (F[o + 1] + by) / 4, rx = (F[o] - bx) / 4, ry = (F[o + 1] - by) / 4;
     const gl = ground(lx, ly), gr = ground(rx, ry);
-    return { lx, ly, rx, ry, top: F[o + 2] / 2 - 0.17, gl, gr, g: Math.max(gl, gr) };
+    return { lx, ly, rx, ry, top: F[o + 2] / 2 - 0.17, gl, gr, g: Math.max(gl, gr), busy: busy(lx, ly) || busy(rx, ry) };
   };
   const trestle = (L, k0, k1, own) => {
     const posts = new Path2D(), braces = new Path2D();
@@ -177,7 +191,7 @@ function buildGeo(c, pi) {
     for (let k = k0 - (k0 % 4 ? k0 % 4 - 4 : 0); k < k1 || (k === last && k1 === last && endOpen); k += 4) {
       if (!own(k)) continue;
       const b = bentAt(k);
-      if (b.top - b.g < 0.3) continue;
+      if (b.top - b.g < 0.3 || b.busy) continue;
       any = true;
       ln(posts, b.lx, b.ly, b.top, b.lx, b.ly, b.gl); ln(posts, b.rx, b.ry, b.top, b.rx, b.ry, b.gr);
       let z0 = b.g, flip = ((k >> 2) + pi) & 1;
@@ -191,6 +205,7 @@ function buildGeo(c, pi) {
       // ribbon boards to the next bent at every level both of them reach
       if (k + 4 > last) continue;
       const e = bentAt(k + 4), g2 = Math.max(b.g, e.g), top = Math.min(b.top, e.top);
+      if (e.busy) continue;
       for (let z = Math.floor(g2) + 1; z < top - 0.35; z++) { ln(braces, b.lx, b.ly, z, e.lx, e.ly, z); ln(braces, b.rx, b.ry, z, e.rx, e.ry, z); }
     }
     if (any) L.push(layer(braces, null, T.supLo, 1.3, 1, 'butt'), layer(posts, null, T.sup, 1.9, 0, 'butt'));
@@ -212,7 +227,7 @@ function buildGeo(c, pi) {
         const x = gx(s.x, s.y), y = gy(s.x, s.y, g + 0.02);
         if (pen) { q.lineTo(x, y); any = true; } else { q.moveTo(x, y); pen = true; }
       }
-      if (any) add(q, null, 'rgba(20,35,45,0.15)', wood ? 12 : 9, 1);
+      if (any) add(q, null, 'rgba(20,35,45,0.15)', wood ? 12 : 9, 1, 'butt'); // flat ends: the parts of a piece meet without darker overlaps
     }
     if (back) back(L, k0, k1);
     if (!station && !inv) {
@@ -334,7 +349,7 @@ function buildGeo(c, pi) {
     return L;
   };
 
-  const out = { parts: null, split: false, roof: null, tv: S.tv };
+  const out = { parts: null, split: false, roof: null, tv: S.tv, pv: S.pv, seen };
   if (loop) {
     // A-frames at both ends hold the loop: legs on each side of the track up to its widest point,
     // and a second pair reaching further up. The legs nearer to the viewer are drawn over the track.
@@ -404,7 +419,7 @@ function buildGeo(c, pi) {
 export function drawPiece(ctx, c, pi, alpha, cell) {
   const p = c.pieces[pi];
   let g = p.geo;
-  if (!g || g.tv !== S.tv) g = p.geo = buildGeo(c, pi);
+  if (!geoFresh(g)) g = p.geo = buildGeo(c, pi);
   if (alpha !== undefined) ctx.globalAlpha = alpha;
   ctx.lineJoin = 'round';
   const parts = g.parts, one = g.split && cell !== undefined;
@@ -494,7 +509,7 @@ function stationParts(c, p, pi, T, base, roof) {
 // The gates and the canopy of a station tile, drawn after the train so they sit in front of and above it.
 export function stationRoof(ctx, c, p) {
   let g = p.geo;
-  if (!g || g.tv !== S.tv) g = p.geo = buildGeo(c, c.pieces.indexOf(p));
+  if (!geoFresh(g)) g = p.geo = buildGeo(c, c.pieces.indexOf(p));
   if (!g.roof) return;
   ctx.lineJoin = 'round';
   paint(ctx, g.roof);

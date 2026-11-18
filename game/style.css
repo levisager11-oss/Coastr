@@ -65,17 +65,18 @@ svg { display: block; }
 /* ---------- notes: tutorial, toasts, test ride read-out ---------- */
 #notes {
   position: fixed; z-index: 6; pointer-events: none; top: calc(var(--th) + 8px);
-  left: calc(8px + var(--sl)); right: calc(8px + var(--sr));
-  display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  left: calc(8px + var(--sl)); right: calc(8px + var(--sr)); bottom: calc(var(--bh) + 6px);
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px; overflow: hidden;
 }
 #notes > * { pointer-events: auto; }
 #tutorial {
+  flex: 0 1 auto; min-height: min(64px, 100%); overflow-y: auto; overscroll-behavior: contain;
   background: var(--card); border-radius: 14px; box-shadow: var(--shadow); padding: 10px 12px; max-width: 400px;
   border-left: 6px solid var(--yellow); font-weight: 600;
 }
 #tutorial .t-btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
 #tutorial .btn { min-height: 32px; font-size: 13px; }
-#toasts { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; pointer-events: none !important; }
+#toasts { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; pointer-events: none !important; }
 .toast {
   background: var(--ink); color: #fff; border-radius: 12px; padding: 8px 12px; font-size: 13.5px; max-width: 340px;
   box-shadow: var(--shadow); animation: pop 0.18s ease-out; white-space: normal;
@@ -304,10 +305,10 @@ table.fin .pos { color: #05805f; }
 
 /* ---------- modal ---------- */
 #modal { position: fixed; inset: 0; z-index: 30; background: rgba(43, 45, 66, 0.45); display: flex; align-items: center; justify-content: center; padding: 14px; }
-.dialog { background: #fff; border-radius: 18px; box-shadow: var(--shadow); padding: 16px; width: 100%; max-width: 420px; max-height: 100%; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.dialog { --dp: 16px; background: #fff; border-radius: 18px; box-shadow: var(--shadow); padding: var(--dp); width: 100%; max-width: 420px; max-height: 100%; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
 .dialog h2 { margin: 0; font-size: 18px; font-weight: 800; }
 .dialog p { margin: 0; font-weight: 600; white-space: normal; }
-.dialog .btns { justify-content: flex-end; }
+.dialog .btns { justify-content: flex-end; position: sticky; bottom: calc(-1 * var(--dp)); background: #fff; margin: 0 calc(-1 * var(--dp)) calc(-1 * var(--dp)); padding: 6px var(--dp) var(--dp); }
 .dialog .btns .btn { flex: 0 1 auto; min-width: 88px; min-height: 42px; }
 .dialog dl { margin: 0; display: flex; flex-direction: column; gap: 8px; }
 .dialog dt { font-weight: 800; }
@@ -354,6 +355,10 @@ table.fin .pos { color: #05805f; }
   #info { max-width: 100%; white-space: normal; text-align: center; }
 }
 @media (max-width: 400px) {
+  #builder .b-pick { flex-wrap: nowrap; gap: 3px; padding-left: 8px; }
+  #builder .b-pick b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #builder .b-pick button { flex: none; padding: 0 7px; }
+  #builder .b-pick button span { display: none; }
   .m-top { gap: 6px; grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr); }
   .m-top .m-btn.parks span { white-space: normal; }
   .m-btn.parks { padding-left: 10px; padding-right: 10px; }
@@ -404,6 +409,10 @@ table.fin .pos { color: #05805f; }
   #panel { top: calc(5px + var(--st)); bottom: calc(5px + var(--sb)); left: calc(5px + var(--sl)); right: calc(5px + var(--sr)); width: auto; max-height: none; z-index: 12; }
   #hud.has-panel #tutorial { display: none; }
   #tutorial { font-size: 12px; padding: 6px 9px; max-width: 100%; }
+  /* messages come and go: they go above the tip, which shrinks and scrolls meanwhile */
+  #toasts { order: -1; flex: none; }
+  #toasts .toast:not(:last-child) { display: none; }
+  #tutorial { min-height: 0; }
   #tutorial .t-btns { margin-top: 4px; }
   #tutorial .btn { min-height: 26px; font-size: 12px; }
   .toast { font-size: 12px; padding: 5px 9px; }
@@ -425,8 +434,11 @@ table.fin .pos { color: #05805f; }
   #builder .g-act button { order: 4; }
   #builder .g-act button[data-b="undo"], #builder .g-act button[data-b="done"] { order: 2; }
   #builder .g-opt button, #builder .g-spec button { order: 3; }
-  #builder .b-status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 0; }
+  #builder .b-status { white-space: normal; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; min-height: 0; line-height: 1.25; }
   #builder .b-status:empty { display: none; }
+  #builder .b-head { flex-wrap: nowrap; min-width: 0; }
+  #builder .b-head b { flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #builder .b-head span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #info { display: none; }
   #undo { min-height: 30px; }
   #builder .b-pick { padding: 2px 2px 2px 8px; margin-bottom: 3px; gap: 3px; }
@@ -452,7 +464,7 @@ table.fin .pos { color: #05805f; }
   .m-ph { padding: 4px 10px 4px 4px; }
   .m-ph h2 { font-size: 16px; }
   .m-plist { gap: 6px; }
-  .dialog { padding: 10px; gap: 7px; }
+  .dialog { --dp: 10px; gap: 7px; }
 }
 /* short landscape screens (phones held sideways): tools sit in the bottom-left corner, menus run along the bottom */
 @media (max-height: 480px) and (min-width: 561px) {
@@ -460,6 +472,7 @@ table.fin .pos { color: #05805f; }
   #tools { order: 0; flex: none; grid-template-columns: repeat(2, 72px); }
   /* tips and messages sit beside the tools, not over them */
   #notes { left: calc(168px + var(--sl)); }
+  #hud.has-panel #notes { right: calc(306px + var(--sr)); }
   #tools button { padding: 3px 1px 2px; }
   #tools button canvas, #tools button svg { width: 28px; height: 23px; }
   #tools button span { font-size: 9.5px; }
@@ -496,7 +509,7 @@ table.fin .pos { color: #05805f; }
   #panel { top: calc(var(--th) + 10px); bottom: auto; left: auto; width: 290px; max-height: calc(100% - var(--th) - 16px); z-index: 8; }
   #builder { padding: 5px 8px; width: auto; }
   #builder .b-head { margin-bottom: 2px; }
-  #builder .b-status { padding-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 0; }
+  #builder .b-status { padding-bottom: 3px; white-space: normal; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; min-height: 0; line-height: 1.25; }
   #builder .b-status:empty { display: none; }
   #builder .b-rows { gap: 4px; justify-content: flex-start; }
   #builder .grp { padding: 2px; gap: 2px; }
@@ -509,5 +522,5 @@ table.fin .pos { color: #05805f; }
   #builder .b-pick button span { display: none; }
   #tutorial { max-width: 330px; font-size: 12.5px; padding: 8px 10px; }
   #st-date { display: none; }
-  .dialog { padding: 12px; }
+  .dialog { --dp: 12px; }
 }
