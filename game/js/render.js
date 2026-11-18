@@ -6,7 +6,7 @@ import { guestPos, queueLine } from './guests.js';
 import { darkness } from './sim.js';
 import * as SP from './sprites.js';
 import { drawFxWorld, drawFxGlow, drawFxScreen, fxWet, fxSnow } from './fx.js';
-import { drawPiece, drawCar, stationRoof, setTrackDetail, coasterThumb } from './track.js';
+import { drawPiece, drawCar, stationRoof, setTrackDetail, coasterThumb, trackPictures } from './track.js';
 import { isoX, isoY, heff, shade, mix, rectPath } from './iso.js';
 
 export { isoX, isoY, shade, drawPiece, coasterThumb };
@@ -19,6 +19,14 @@ export const view = { w: 800, h: 600, dpr: 1 };
 // itself when frames take too long, unless auto is off.
 // ground: false draws the ground straight to the screen every frame (to compare against the kept picture).
 export const look = { night: true, q: 0, auto: true, ground: true };
+// world to device pixels for the frame being drawn: x * a + e, y * a + f (e and f are whole pixels)
+export const px = { a: 1, e: 0, f: 0 };
+/** Copies a picture made at exactly scale px.a, with its top left corner at world point (wx, wy). */
+function blit(ctx, cv, wx, wy) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(cv, Math.round(wx * px.a + px.e), Math.round(wy * px.a + px.f));
+  ctx.setTransform(px.a, 0, 0, px.a, px.e, px.f);
+}
 const HW = 32, HH = 16, ZH = 16;
 const SEA = 0.4; // height of the ground around the park, in levels
 const FONT = 'ui-rounded, "Segoe UI", system-ui, sans-serif';
@@ -140,24 +148,13 @@ const hash = (x, y) => { let h = (x * 374761393 + y * 668265263) >>> 0; h = ((h 
 
 // ---------- guests ----------
 const HATS = ['#ef476f', '#ffd23f', '#06d6a0', '#3b8ed0', '#9b5de5'];
-function drawGuest(ctx, g, sx, sy, sel, time, rain) {
-  const walking = g.st === 'walk';
-  const step = walking ? Math.sin(g.walk) : 0;
-  const k = g.id % 7 === 0 ? 0.82 : 1; // some guests are children
+// Guests are drawn from small pictures made once per look and pose (see drawGuest), sized to the screen.
+const GW = 18, GH = 28, GY = 23; // picture size and where the feet are, in world units
+const guestPics = new Map();
+let guestScale = 0;
+function guestBody(ctx, g, sx, sy, step, hop, cheer, sick, k) {
   ctx.fillStyle = 'rgba(0,0,0,0.18)';
   ctx.beginPath(); ctx.ellipse(sx, sy, 4.4 * k, 2.2 * k, 0, 0, 6.3); ctx.fill();
-  if (sel) {
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.ellipse(sx, sy, 8, 4, 0, 0, 6.3); ctx.stroke();
-  }
-  if (!fine) {
-    // far away a guest is just a shirt and a head
-    ctx.fillStyle = g.shirt; ctx.fillRect(sx - 3 * k, sy - 11 * k, 6 * k, 10 * k);
-    ctx.fillStyle = g.skin; ctx.beginPath(); ctx.arc(sx, sy - 13.8 * k, 3.1 * k, 0, 6.3); ctx.fill();
-    return;
-  }
-  const cheer = g.emT > 1.6 && (g.em === 'star' || g.em === 'smile');
-  const hop = cheer ? Math.abs(Math.sin((g.emT - 1.6) * 8)) * 3 : 0;
   const bob = Math.abs(step) * 0.8 + hop;
   const by = sy - bob;
   // legs
@@ -183,7 +180,7 @@ function drawGuest(ctx, g, sx, sy, sel, time, rain) {
   ctx.strokeStyle = 'rgba(30,20,50,0.4)'; ctx.lineWidth = 0.7; ctx.stroke();
   // head
   const hy = by - 13.8 * k;
-  ctx.fillStyle = g.nausea > 70 ? '#9fcf6a' : g.skin;
+  ctx.fillStyle = sick ? '#9fcf6a' : g.skin;
   ctx.beginPath(); ctx.arc(sx, hy, 3.1 * k, 0, 6.3); ctx.fill();
   ctx.fillStyle = g.hair;
   ctx.beginPath(); ctx.arc(sx, hy - 0.6 * k, 3.1 * k, Math.PI, 0); ctx.fill();
@@ -192,6 +189,45 @@ function drawGuest(ctx, g, sx, sy, sel, time, rain) {
     ctx.beginPath(); ctx.arc(sx, hy - 1.2 * k, 3.3 * k, Math.PI, 0); ctx.fill();
     ctx.fillRect(sx - 1 * k, hy - 1.9 * k, 5.6 * k, 1.3 * k);
   }
+}
+function drawGuest(ctx, g, sx, sy, sel, time, rain) {
+  const walking = g.st === 'walk';
+  const step = walking ? Math.sin(g.walk) : 0;
+  const k = g.id % 7 === 0 ? 0.82 : 1; // some guests are children
+  if (sel) {
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.ellipse(sx, sy, 8, 4, 0, 0, 6.3); ctx.stroke();
+  }
+  if (!fine) {
+    // far away a guest is just a shirt and a head
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.beginPath(); ctx.ellipse(sx, sy, 4.4 * k, 2.2 * k, 0, 0, 6.3); ctx.fill();
+    ctx.fillStyle = g.shirt; ctx.fillRect(sx - 3 * k, sy - 11 * k, 6 * k, 10 * k);
+    ctx.fillStyle = g.skin; ctx.beginPath(); ctx.arc(sx, sy - 13.8 * k, 3.1 * k, 0, 6.3); ctx.fill();
+    return;
+  }
+  const cheer = g.emT > 1.6 && (g.em === 'star' || g.em === 'smile');
+  const hop = cheer ? Math.abs(Math.sin((g.emT - 1.6) * 8)) * 3 : 0;
+  const bob = Math.abs(step) * 0.8 + hop;
+  const by = sy - bob, hy = by - 13.8 * k;
+  if (guestScale) {
+    // a ready-made picture of this guest in the nearest of a few poses
+    const sq = Math.round(step * 3), hq = Math.round(hop), sick = g.nausea > 70 ? 1 : 0;
+    if (g.lookHat !== g.hat || !g.look) { g.lookHat = g.hat; g.look = g.shirt + g.skin + g.hair + (g.hat || 0) + k; }
+    let poses = guestPics.get(g.look);
+    if (!poses) { if (guestPics.size > 700) guestPics.clear(); poses = []; guestPics.set(g.look, poses); }
+    const pi = sq + 3 + 7 * hq + 28 * (cheer ? 1 : 0) + 56 * sick;
+    let cv = poses[pi];
+    if (!cv) {
+      const s = guestScale;
+      cv = poses[pi] = document.createElement('canvas');
+      cv.width = Math.ceil(GW * s); cv.height = Math.ceil(GH * s);
+      const gc = cv.getContext('2d');
+      gc.setTransform(s, 0, 0, s, 0, 0);
+      guestBody(gc, g, GW / 2, GY, sq / 3, hq, cheer, sick, k);
+    }
+    if (guestScale === px.a) blit(ctx, cv, sx - GW / 2, sy - GY); else ctx.drawImage(cv, sx - GW / 2, sy - GY, GW, GH);
+  } else guestBody(ctx, g, sx, sy, step, hop, cheer, g.nausea > 70, k);
   if (g.gift) {
     const cols = ['#ef476f', '#ffd23f', '#06d6a0', '#3b8ed0', '#9b5de5'];
     const bx = sx + 5 + Math.sin(g.walk * 0.3 + time) * 1.2, byy = sy - 27 - bob;
@@ -318,21 +354,36 @@ export function render(ctx, time, ui) {
   lastZoom = z;
   const mw = Math.round(w * 0.25), mh = Math.round(h * 0.25);
   const cached = steady >= 2 && look.ground && typeof document !== 'undefined';
+  // The world is placed on whole device pixels. Then the ground picture and every ready-made picture
+  // (scenery, track, guests) made at this scale is copied pixel for pixel, which is far cheaper than
+  // copying it a fraction of a pixel off, and stays crisp.
+  const A = dpr * z;
+  px.a = A; px.e = Math.round(dpr * w / 2 - cam.x * A); px.f = Math.round(dpr * h / 2 - cam.y * A);
   if (cached) {
     if (key !== groundKey || Math.abs(cam.x - gcx) * z > mw - 2 || Math.abs(cam.y - gcy) * z > mh - 2) {
       groundKey = key; gcx = cam.x; gcy = cam.y;
       drawGround(TH, w + 2 * mw, h + 2 * mh, z, dpr, detail);
     }
     // copy just the part that is on screen
-    ctx.drawImage(ground, (mw + (cam.x - gcx) * z) * dpr, (mh + (cam.y - gcy) * z) * dpr, w * dpr, h * dpr, 0, 0, w, h);
+    const cw = ctx.canvas.width, ch = ctx.canvas.height;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(ground, gE - px.e, gF - px.f, cw, ch, 0, 0, cw, ch);
     if (occlTv !== S.tv) markOccluders();
   } else drawBackdrop(ctx, TH, w, h, z, time);
-  ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (w / 2 - cam.x * z), dpr * (h / 2 - cam.y * z));
+  ctx.setTransform(A, 0, 0, A, px.e, px.f);
   const wx0 = cam.x - w / 2 / z - 48, wx1 = cam.x + w / 2 / z + 48;
   const wy0 = cam.y - h / 2 / z - 48, wy1 = cam.y + h / 2 / z;
   const rain = fxWet() > 0.5;
   frameNo++;
-  const stamp = (look.q >= 1 || z < 1) && z * dpr <= 2.2; // still scenery may be drawn from ready-made pictures
+  // still scenery is drawn from ready-made pictures, except close up where the trees' gentle sway shows
+  const stamp = (look.q >= 1 || z < 1.5) && z * dpr <= 3;
+  trackPictures(look.pics === false ? 99 : A, steady >= 2, px);
+  if (steady >= 2) stampScale = A;
+  if (typeof document === 'undefined' || z * dpr > 3 || look.pics === false) { guestScale = 0; guestPics.clear(); }
+  else if (steady >= 2 || !guestScale) {
+    const gs = A;
+    if (gs !== guestScale) { guestScale = gs; guestPics.clear(); }
+  }
   lights.length = 0; emotes.length = 0;
 
   // dynamic things go into per-tile buckets so they sort with the scenery
@@ -421,7 +472,7 @@ export function render(ctx, time, ui) {
       else if (detail && S.water[i] && !S.path[i]) ripple(ctx, x, y, sx, sy, time);
       const sc = S.scn[i];
       if (sc) {
-        if (stamp && STILL[sc]) stampScenery(ctx, sc, sx, sy + HH, hash(x, y)); else drawScenery(ctx, sc, sx, sy + HH, time, hash(x, y));
+        if (stamp && STILL[sc]) stampScenery(ctx, sc, sx, sy + HH, hash(x, y), dark > 0.3); else drawScenery(ctx, sc, sx, sy + HH, time, hash(x, y));
         if (dark > 0.05 && (sc === SCN.lamp || sc === SCN.torch)) lights.push(sx, sy + HH - 30, sc === SCN.lamp ? 78 : 58 + Math.sin(time * 9 + x) * 5, 0);
       }
       let roofs = null;
@@ -495,7 +546,7 @@ export function render(ctx, time, ui) {
     const r = Math.round((255 - 165 * dark) * (1 - gloom)), g = Math.round((255 - 146 * dark) * (1 - gloom)), b = Math.round((255 - 78 * dark) * (1 - gloom * 0.7));
     ctx.globalCompositeOperation = 'multiply';
     ctx.fillStyle = `rgb(${r},${g},${b})`; ctx.fillRect(0, 0, w, h);
-    ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (w / 2 - cam.x * z), dpr * (h / 2 - cam.y * z));
+    ctx.setTransform(px.a, 0, 0, px.a, px.e, px.f);
     if (dark > 0.05 && lights.length) {
       if (!glowWarm) { glowWarm = glowSprite('255,205,120'); glowCool = glowSprite('220,235,255'); }
       if (glowWarm) {
@@ -523,23 +574,30 @@ function hot(ctx, p) {
 }
 // Scenery that does not move (apart from a gentle sway) can be stamped from a picture made once, which
 // is much cheaper than drawing its shapes again every frame. Four pictures per kind cover the size variety.
-const STILL = SCENERY.map((d) => !!d && ['oak', 'pine', 'snowpine', 'palm', 'cactus', 'bush', 'hedge', 'topiary', 'flowers', 'rock', 'bench', 'picnic', 'statue', 'snowman'].includes(d.id));
+const STILL = SCENERY.map((d) => !!d && ['oak', 'pine', 'snowpine', 'palm', 'cactus', 'bush', 'hedge', 'topiary', 'flowers', 'rock', 'bench', 'picnic', 'statue', 'snowman', 'lamp'].includes(d.id));
+// lamps get two pictures: by day, and lit at night
+const LIT = SCENERY.map((d) => !!d && d.id === 'lamp');
+// The pictures are made at the screen's own scale (stampScale, set once the zoom has settled), so
+// stamping is a plain copy rather than shrinking a big picture every time.
 const stamps = new Map();
-function stampScenery(ctx, code, cx, cy, hsh) {
-  const b = Math.min(3, (hsh * 4) | 0), key = code * 4 + b;
+let stampScale = 1;
+function stampScenery(ctx, code, cx, cy, hsh, lit) {
+  const b = Math.min(3, (hsh * 4) | 0), key = (code * 4 + b) * 2 + (lit && LIT[code] ? 1 : 0);
   let c = stamps.get(key);
-  if (c === undefined) {
-    c = null;
+  if (c === undefined || (c && c.s !== stampScale)) {
     if (typeof document !== 'undefined') {
-      c = document.createElement('canvas');
-      c.width = 144; c.height = 176;
-      const g = c.getContext('2d');
-      g.scale(2, 2);
+      const cv = c ? c.cv : document.createElement('canvas'), s = stampScale;
+      cv.width = Math.ceil(72 * s); cv.height = Math.ceil(88 * s);
+      const g = cv.getContext('2d');
+      g.setTransform(s, 0, 0, s, 0, 0);
       drawScenery(g, code, 36, 72, 0, (b + 0.5) / 4);
-    }
+      c = { cv, s };
+    } else c = null;
     stamps.set(key, c);
   }
-  if (c) ctx.drawImage(c, cx - 36, cy - 72, 72, 88); else drawScenery(ctx, code, cx, cy, 0, hsh);
+  if (!c) drawScenery(ctx, code, cx, cy, 0, hsh);
+  else if (c.s === px.a) blit(ctx, c.cv, cx - 36, cy - 72);
+  else ctx.drawImage(c.cv, cx - 36, cy - 72, 72, 88);
 }
 
 // Soft shadows of clouds drifting over the park.
@@ -713,6 +771,7 @@ function ripple(ctx, x, y, sx, sy, time) {
 }
 
 // ---------- pictures kept between frames ----------
+let gE = 0, gF = 0;
 let ground = null, groundKey = '', gcx = 0, gcy = 0, lastZoom = 0, steady = 0, frameNo = 0, occlTv = -1;
 const occl = new Uint8Array(N * N);
 // The backdrop and every ground tile on screen, drawn once (time < 0 means: nothing that moves).
@@ -723,7 +782,8 @@ function drawGround(TH, w, h, z, dpr, detail) {
   const g = ground.getContext('2d');
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   farGrad = null; drawBackdrop(g, TH, w, h, z, 0); farGrad = null;
-  g.setTransform(dpr * z, 0, 0, dpr * z, dpr * (w / 2 - cam.x * z), dpr * (h / 2 - cam.y * z));
+  gE = Math.round(dpr * w / 2 - cam.x * dpr * z); gF = Math.round(dpr * h / 2 - cam.y * dpr * z);
+  g.setTransform(dpr * z, 0, 0, dpr * z, gE, gF);
   const wx0 = cam.x - w / 2 / z - 80, wx1 = cam.x + w / 2 / z + 80, wy0 = cam.y - h / 2 / z - 90, wy1 = cam.y + h / 2 / z + 150;
   for (let d = 0; d <= 2 * N - 2; d++) {
     for (let x = Math.max(0, d - N + 1); x <= Math.min(N - 1, d); x++) {

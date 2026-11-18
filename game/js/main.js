@@ -180,16 +180,22 @@ function achievement(id) {
 // ---------- speed ----------
 // If frames take too long (a weak phone, a huge park) the picture is drawn a little less sharp and
 // with fewer small details, step by step, and goes back up when there is time to spare.
+// It steps down as soon as more than about one frame in four is late (on a 60 Hz screen a late
+// frame takes 33 ms), and only tries a better step after a long smooth spell. A better step that
+// turns out too slow makes the next try wait twice as long, so it does not keep stuttering.
 const Q_SCALE = [1, 0.8, 0.65, 0.55];
-let avgMs = 16, slowT = 0, fastT = 0, holdT = 0, warmT = 3;
+let avgMs = 16, slowT = 0, fastT = 0, holdT = 0, warmT = 3, sinceUp = 99, backoff = 20;
 function tuneQuality(sec) {
   if (!look.auto) return;
   if (warmT > 0) { warmT -= sec; return; }
   avgMs += (Math.min(100, sec * 1000) - avgMs) * 0.05;
-  holdT -= sec;
-  if (avgMs > 27) { slowT += sec; fastT = 0; } else if (avgMs < 18.5) { fastT += sec; slowT = 0; } else { slowT = 0; fastT = 0; }
-  if (slowT > 2.5 && look.q < 3) { look.q++; slowT = 0; holdT = 45; resize(); }
-  else if (fastT > 10 && look.q > 0 && holdT <= 0) { look.q--; fastT = 0; holdT = 20; resize(); }
+  holdT -= sec; sinceUp += sec;
+  if (avgMs > 21) { slowT += sec; fastT = 0; } else if (avgMs < 17.5) { fastT += sec; slowT = 0; } else { slowT = 0; fastT = 0; }
+  if (slowT > 2 && look.q < 3) {
+    look.q++; slowT = 0;
+    if (sinceUp < 8) backoff = Math.min(300, backoff * 2);
+    holdT = backoff; resize();
+  } else if (fastT > 8 && look.q > 0 && holdT <= 0) { look.q--; fastT = 0; sinceUp = 0; resize(); }
 }
 
 // ---------- screen ----------

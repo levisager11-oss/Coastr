@@ -190,7 +190,20 @@ TOKI_KEY="$TOKI_KEY" node /tmp/toki-upload.mjs .
   in `drawTile` that moves must cope with `time < 0`, which means "for the kept picture".
   `look.ground = false` switches the picture off for comparing. `look.q` (0 to 3) lowers the
   drawing resolution and drops small details; `tuneQuality` in `main.js` sets it from measured
-  frame times unless `look.auto` is false. Set `look.auto = false` in tests that compare pictures.
+  frame times unless `look.auto` is false (down when about one frame in four is late, up again only
+  after a long smooth spell, waiting longer after each try that failed). Set `look.auto = false` in tests that compare pictures.
+- The world is placed on whole device pixels (`px` in `render.js`: device = world * `px.a` + `px.e`).
+  Ready-made pictures made at exactly that scale are copied pixel for pixel (`blit`); a copy that is
+  off by a fraction of a pixel or scaled is several times slower (measured: slower than drawing a
+  tree's shapes). Pictures made this way: still scenery (`stampScenery`, lamps lit and unlit), guests
+  (`guestPics`, per look and a few poses), and every part of every coaster track (`paintPart` in
+  `track.js`, a few per frame, within `PIC_BUDGET` pixels, freed when long off screen). They are
+  made again when the zoom settles; while zooming the old ones are stretched. Close up (scale above 3)
+  everything is drawn as shapes. `look.pics = false` switches the track and guest pictures off.
+- Track paths are `BPath` (a `Path2D` that records its bounds) so a part knows its picture's size.
+  Anything that changes how a piece looks must clear `piece.geo` (colour changes already do).
+- Rides and stalls are still drawn as shapes every frame because they move; they are now the
+  largest part of a frame.
 - Tried and dropped: keeping each ride as its own picture refreshed every few frames. Uploading the
   changed pictures cost more than drawing the rides.
 - `cover.png` and `shots/*.png` were captured from the running game at 1280x720.

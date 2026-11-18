@@ -41,6 +41,18 @@ function styleOf(c) {
 // when: 0 = always, 1 = only close up, 2 = only from far away.
 const layer = (p, f, s, w, when, cap) => ({ p, f: f || null, s: s || null, w: w || 1, when: when || 0, cap: cap || 'round' });
 
+// A path that knows the box it covers, so a piece can be kept as a ready-made picture (see paintPart).
+class BPath extends (typeof Path2D !== 'undefined' ? Path2D : class { moveTo() {} lineTo() {} rect() {} ellipse() {} arc() {} closePath() {} }) {
+  constructor() { super(); this.x0 = Infinity; this.y0 = Infinity; this.x1 = -Infinity; this.y1 = -Infinity; }
+  b(x, y) { if (x < this.x0) this.x0 = x; if (x > this.x1) this.x1 = x; if (y < this.y0) this.y0 = y; if (y > this.y1) this.y1 = y; }
+  moveTo(x, y) { this.b(x, y); super.moveTo(x, y); }
+  lineTo(x, y) { this.b(x, y); super.lineTo(x, y); }
+  rect(x, y, w, h) { this.b(x, y); this.b(x + w, y + h); super.rect(x, y, w, h); }
+  ellipse(x, y, rx, ry, ...a) { this.b(x - rx, y - ry); this.b(x + rx, y + ry); super.ellipse(x, y, rx, ry, ...a); }
+  arc(x, y, r, ...a) { this.b(x - r, y - r); this.b(x + r, y + r); super.arc(x, y, r, ...a); }
+}
+
+const paintAll = (ctx, part) => paint(ctx, part.L);
 function paint(ctx, L) {
   for (let i = 0; i < L.length; i++) {
     const l = L[i];
@@ -48,6 +60,90 @@ function paint(ctx, L) {
     if (l.f) { ctx.fillStyle = l.f; ctx.fill(l.p); }
     if (l.s) { ctx.strokeStyle = l.s; ctx.lineWidth = l.w; ctx.lineCap = l.cap; ctx.stroke(l.p); }
   }
+}
+
+// Track does not move, so once the zoom has settled each part of a piece is painted into a small
+// picture of its own at the screen's scale and from then on only copied: a few dozen strokes become one
+// copy. Pictures are made a few per frame (the rest are drawn as paths meanwhile), only up to a total
+// size, and only when they stay small enough on screen; close up the paths are drawn as before.
+const pics = { scale: 0, on: false, budget: 0, made: 0, gen: 1, frame: 0, live: [] };
+const PIC_BUDGET = 6e6; // pixels, all pictures together (a busy park seen whole needs 1 to 2 million)
+const PIC_PER_FRAME = 24;
+const PIC_MAX_SCALE = 3;
+// make room by letting go of the pictures that have not been on screen for a while
+function dropPic(pc) {
+  if (pc.dead) return;
+  pics.budget += pc.cv.width * pc.cv.height;
+  pc.cv.width = pc.cv.height = 0; pc.dead = true;
+}
+function freePics() {
+  const keep = [];
+  for (const pc of pics.live) {
+    if (pc.dead) continue;
+    if (pc.used < pics.frame - 20 || pc.gen !== pics.gen) dropPic(pc); else keep.push(pc);
+  }
+  pics.live = keep;
+}
+/** Called once per frame by the renderer with s = screen pixels per world unit. While the zoom is
+ *  changing (settled false) the pictures already made are stretched; once it settles they are made
+ *  afresh at the new scale, a few per frame, the old ones standing in until then. */
+let px = { a: 1, e: 0, f: 0 };
+export function trackPictures(s, settled, where) {
+  px = where;
+  if (settled && s !== pics.scale) { pics.scale = s; pics.gen++; }
+  if (!pics.live.length) pics.budget = PIC_BUDGET;
+  pics.on = s <= PIC_MAX_SCALE && pics.scale > 0 && pics.scale <= PIC_MAX_SCALE && typeof document !== 'undefined';
+  pics.made = 0; pics.frame++;
+}
+function partBox(L) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const l of L) {
+    const p = l.p, m = l.s ? l.w / 2 + 1 : 1;
+    if (p.x0 - m < x0) x0 = p.x0 - m; if (p.y0 - m < y0) y0 = p.y0 - m;
+    if (p.x1 + m > x1) x1 = p.x1 + m; if (p.y1 + m > y1) y1 = p.y1 + m;
+  }
+  return x1 > x0 ? [Math.floor(x0), Math.floor(y0), Math.ceil(x1), Math.ceil(y1)] : null;
+}
+function paintPart(ctx, part) {
+  if (pics.on) {
+    let pc = part.pic;
+    const key = pics.gen * 2 + (fine ? 1 : 0);
+    if (pc && pc.dead) pc = part.pic = null;
+    if (!pc || pc.key !== key) {
+      if (pics.made < PIC_PER_FRAME) {
+        const box = part.box || (part.box = partBox(part.L));
+        const s = pics.scale;
+        if (box) {
+          const w = Math.ceil((box[2] - box[0]) * s), h = Math.ceil((box[3] - box[1]) * s);
+          if (w * h > pics.budget) freePics();
+          if (w * h <= pics.budget && w > 0 && h > 0) {
+            if (pc) dropPic(pc);
+            pics.made++; pics.budget -= w * h;
+            const cv = document.createElement('canvas');
+            cv.width = w; cv.height = h;
+            const g = cv.getContext('2d');
+            g.setTransform(s, 0, 0, s, -box[0] * s, -box[1] * s);
+            g.lineJoin = 'round';
+            paint(g, part.L);
+            pc = part.pic = { key, cv, box, gen: pics.gen, used: pics.frame };
+            pics.live.push(pc);
+          }
+        }
+      }
+    }
+    if (pc) {
+      const b = pc.box;
+      pc.used = pics.frame;
+      if (pics.scale === px.a && pc.gen === pics.gen) {
+        // made at this very scale: copy it pixel for pixel
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.drawImage(pc.cv, Math.round(b[0] * px.a + px.e), Math.round(b[1] * px.a + px.f));
+        ctx.setTransform(px.a, 0, 0, px.a, px.e, px.f);
+      } else ctx.drawImage(pc.cv, b[0], b[1], b[2] - b[0], b[3] - b[1]);
+      return;
+    }
+  }
+  paint(ctx, part.L);
 }
 
 const clampN = (v) => Math.max(0, Math.min(N - 1, Math.floor(v)));
@@ -119,7 +215,7 @@ function buildGeo(c, pi) {
   const gx = (xt, yt) => isoX(xt, yt), gy = (xt, yt, z) => isoY(xt, yt, z);
 
   // --- supports ---
-  const supSet = () => ({ dark: new Path2D(), light: new Path2D(), ink: new Path2D(), any: false });
+  const supSet = () => ({ dark: new BPath(), light: new BPath(), ink: new BPath(), any: false });
   const flush = (L, s) => {
     if (!s.any) return;
     L.push(layer(s.dark, T.supLo), layer(s.light, T.sup), layer(s.ink, null, T.supInk, 1, 1, 'butt'));
@@ -185,7 +281,7 @@ function buildGeo(c, pi) {
     return { lx, ly, rx, ry, top: F[o + 2] / 2 - 0.17, gl, gr, g: Math.max(gl, gr), busy: busy(lx, ly) || busy(rx, ry) };
   };
   const trestle = (L, k0, k1, own) => {
-    const posts = new Path2D(), braces = new Path2D();
+    const posts = new BPath(), braces = new BPath();
     let any = false;
     const ln = (q, x0, y0, z0, x1, y1, z1) => { q.moveTo(gx(x0, y0), gy(x0, y0, z0)); q.lineTo(gx(x1, y1), gy(x1, y1, z1)); };
     for (let k = k0 - (k0 % 4 ? k0 % 4 - 4 : 0); k < k1 || (k === last && k1 === last && endOpen); k += 4) {
@@ -216,10 +312,10 @@ function buildGeo(c, pi) {
     const L = [];
     const own = (k) => k >= k0 && (k < k1 || (k === last && k1 === last && endOpen));
     const add = (q, f, s, w, when, cap) => L.push(layer(q, f, s, w, when, cap));
-    const rails = (ox, oy) => { const q = new Path2D(); run(q, W, 0, k0, k1, ox, oy); run(q, -W, 0, k0, k1, ox, oy); return q; };
+    const rails = (ox, oy) => { const q = new BPath(); run(q, W, 0, k0, k1, ox, oy); run(q, -W, 0, k0, k1, ox, oy); return q; };
     // soft shadow on the ground under raised track
     if (!station) {
-      const q = new Path2D();
+      const q = new BPath();
       let pen = false, any = false;
       for (let k = k0; k <= k1; k++) {
         const s = sm[k], g = ground(s.x, s.y);
@@ -242,7 +338,7 @@ function buildGeo(c, pi) {
     // what lies between the rails
     if (wood) {
       const bw = 0.96, bu = -0.16;
-      const bed = new Path2D(), side = new Path2D(), planks = new Path2D();
+      const bed = new BPath(), side = new BPath(), planks = new BPath();
       run(bed, bw, bu, k0, k1);
       for (let k = k1; k >= k0; k--) { P(k, -bw, bu); bed.lineTo(qx, qy); }
       bed.closePath();
@@ -252,12 +348,12 @@ function buildGeo(c, pi) {
       add(bed, T.tieLo);
       add(planks, null, T.tie, 2.5, 0, 'butt');
     } else if (type === 'mini') {
-      const ink = rails(0, 0), ties = new Path2D();
+      const ink = rails(0, 0), ties = new BPath();
       for (let k = k0; k <= k1; k += 1) if (k % 2 === 0 && own(k)) { seg(ties, k, W + 0.1, SP, k, -W - 0.1, SP); seg(ink, k, W + 0.1, SP, k, -W - 0.1, SP); }
       add(ink, null, T.railInk, 4.2, 0, 'butt');
       add(ties, null, T.tie, 2.3);
     } else if (type === 'steel') {
-      const spine = new Path2D(), ties = new Path2D(), hi = new Path2D();
+      const spine = new BPath(), ties = new BPath(), hi = new BPath();
       run(spine, 0, SP, k0, k1); run(hi, 0, SP, k0, k1, -0.4, -1.3);
       for (let k = k0; k <= k1; k++) if (k % 2 === 0 && own(k)) { P(k, W, 0); ties.moveTo(qx, qy); P(k, 0, SP); ties.lineTo(qx, qy); P(k, -W, 0); ties.lineTo(qx, qy); }
       add(spine, null, T.tieInk, 6, 0, 'butt');
@@ -266,7 +362,7 @@ function buildGeo(c, pi) {
       add(hi, null, T.tieHi, 1.3, 1);
     } else {
       // a truss of three tubes laced together in a zigzag
-      const tube = new Path2D(), lace = new Path2D(), hi = new Path2D();
+      const tube = new BPath(), lace = new BPath(), hi = new BPath();
       run(tube, 0, SP, k0, k1); run(hi, 0, SP, k0, k1, -0.3, -0.8);
       for (const b of [W, -W]) {
         P(k0, b * (k0 & 1 ? 0 : 1), k0 & 1 ? SP : 0); lace.moveTo(qx, qy);
@@ -281,14 +377,14 @@ function buildGeo(c, pi) {
     // lift chain, brakes, boosters and the launch
     const cu = wood ? -0.06 : -0.1;
     if (p.chain) {
-      const trough = new Path2D(), links = new Path2D();
+      const trough = new BPath(), links = new BPath();
       run(trough, 0, cu, k0, k1);
       for (let k = k0; k < k1; k++) for (const j of [0.08, 0.58]) seg(links, k + j, 0, cu, k + j + 0.3, 0, cu);
       add(trough, null, '#3a3e4f', 3.6, 0, 'butt');
       add(links, null, '#dfe4ec', 1.5, 1, 'butt');
       if (!wood) {
         // a stair with a handrail on the far side of the lift
-        const sd = F[3] + F[4] > 0 ? -1 : 1, steps = new Path2D(), rail = new Path2D();
+        const sd = F[3] + F[4] > 0 ? -1 : 1, steps = new BPath(), rail = new BPath();
         const b0 = sd * (W + 0.2), b1 = sd * (W + 0.62);
         for (let k = k0; k < k1; k++) { seg(steps, k + 0.25, b0, -0.1, k + 0.25, b1, -0.1); seg(steps, k + 0.75, b0, -0.1, k + 0.75, b1, -0.1); }
         run(rail, b1, 0.95, k0, k1);
@@ -297,12 +393,12 @@ function buildGeo(c, pi) {
         add(rail, null, '#646b82', 1.1, 1, 'butt');
       }
     } else if (p.t === 'brake' || p.t === 'boost' || (type === 'launch' && (pi === 3 || pi === 4) && !inv && c.pieces[0].t === 'station')) {
-      const house = new Path2D();
+      const house = new BPath();
       run(house, 0, cu, k0, k1);
       add(house, null, '#3a3e4f', 6.6, 0, 'butt');
       if (p.t === 'brake') {
         // pairs of red brake fins
-        const fins = new Path2D(), hi = new Path2D(), m = last / 8;
+        const fins = new BPath(), hi = new BPath(), m = last / 8;
         for (const [a0, a1] of [[0.5, 2.5], [3, 5], [5.5, 7.5]]) for (const b of [0.19, -0.19]) {
           seg(fins, a0 * m, b, 0.1, a1 * m, b, 0.1); seg(hi, a0 * m, b, 0.1, a1 * m, b, 0.1, -1);
         }
@@ -310,12 +406,12 @@ function buildGeo(c, pi) {
         add(hi, null, '#ffb4a6', 0.8, 1, 'butt');
       } else if (p.t === 'boost') {
         // green arrows pointing the way the train is pushed
-        const arrows = new Path2D(), m = last / 8;
+        const arrows = new BPath(), m = last / 8;
         for (const tip of [2.1, 4.7, 7.3]) { P((tip - 1.3) * m, 0.44, 0.06); arrows.moveTo(qx, qy); P(tip * m, 0, 0.06); arrows.lineTo(qx, qy); P((tip - 1.3) * m, -0.44, 0.06); arrows.lineTo(qx, qy); }
         add(arrows, null, '#16e6a6', 2.2);
       } else {
         // the launch: a row of glowing blocks down the middle
-        const glow = new Path2D(), blocks = new Path2D();
+        const glow = new BPath(), blocks = new BPath();
         run(glow, 0, 0.02, k0, k1);
         for (let k = k0; k < k1; k++) seg(blocks, k + 0.18, 0, 0.04, k + 0.82, 0, 0.04);
         add(glow, null, 'rgba(120,255,235,0.4)', 9, 1, 'butt');
@@ -331,7 +427,7 @@ function buildGeo(c, pi) {
 
     if (wood && !station) {
       // handrails along the side that is further from the viewer
-      const hr = new Path2D();
+      const hr = new BPath();
       let any = false;
       for (const sd of [1, -1]) {
         let pen = false;
@@ -423,7 +519,7 @@ export function drawPiece(ctx, c, pi, alpha, cell) {
   if (alpha !== undefined) ctx.globalAlpha = alpha;
   ctx.lineJoin = 'round';
   const parts = g.parts, one = g.split && cell !== undefined;
-  for (let i = 0; i < parts.length; i++) if (!one || parts[i].cell === cell) paint(ctx, parts[i].L);
+  for (let i = 0; i < parts.length; i++) if (!one || parts[i].cell === cell) (c.id ? paintPart : paintAll)(ctx, parts[i]);
   ctx.lineCap = 'round';
   if (alpha !== undefined) ctx.globalAlpha = 1;
 }
@@ -441,36 +537,36 @@ function stationParts(c, p, pi, T, base, roof) {
   const g = heff(idx(p.x, p.y)), mid = '#b9bfcc', dark = '#9da5b5';
   const lo = p.d < 2 ? pi === 0 : pi === 2, hi = p.d < 2 ? pi === 2 : pi === 0; // the ends of the station
   // platform
-  base.push(layer(poly(new Path2D(), -0.5, 0.5, zt, 0.5, 0.5, zt, 0.5, 0.5, g, -0.5, 0.5, g), ax ? mid : dark));
-  base.push(layer(poly(new Path2D(), 0.5, -0.5, zt, 0.5, 0.5, zt, 0.5, 0.5, g, 0.5, -0.5, g), ax ? dark : mid));
-  base.push(layer(poly(new Path2D(), -0.5, -0.5, zt, 0.5, -0.5, zt, 0.5, 0.5, zt, -0.5, 0.5, zt), '#e9ecf2'));
-  base.push(layer(poly(new Path2D(), -0.5, -0.29, zt, 0.5, -0.29, zt, 0.5, 0.29, zt, -0.5, 0.29, zt), '#a9b0c0'));
-  base.push(layer(line(new Path2D(), -0.5, -0.28, zt, 0.5, -0.28, zt), null, '#858da2', 1.8, 1, 'butt'));
-  const safe = new Path2D();
+  base.push(layer(poly(new BPath(), -0.5, 0.5, zt, 0.5, 0.5, zt, 0.5, 0.5, g, -0.5, 0.5, g), ax ? mid : dark));
+  base.push(layer(poly(new BPath(), 0.5, -0.5, zt, 0.5, 0.5, zt, 0.5, 0.5, g, 0.5, -0.5, g), ax ? dark : mid));
+  base.push(layer(poly(new BPath(), -0.5, -0.5, zt, 0.5, -0.5, zt, 0.5, 0.5, zt, -0.5, 0.5, zt), '#e9ecf2'));
+  base.push(layer(poly(new BPath(), -0.5, -0.29, zt, 0.5, -0.29, zt, 0.5, 0.29, zt, -0.5, 0.29, zt), '#a9b0c0'));
+  base.push(layer(line(new BPath(), -0.5, -0.28, zt, 0.5, -0.28, zt), null, '#858da2', 1.8, 1, 'butt'));
+  const safe = new BPath();
   line(safe, -0.5, 0.35, zt, 0.5, 0.35, zt); line(safe, -0.5, -0.35, zt, 0.5, -0.35, zt);
   base.push(layer(safe, null, '#ffd23f', 2.2, 0, 'butt'));
-  const edge = line(new Path2D(), -0.5, 0.5, zt, 0.5, 0.5, zt, 0.5, -0.5, zt);
+  const edge = line(new BPath(), -0.5, 0.5, zt, 0.5, 0.5, zt, 0.5, -0.5, zt);
   line(edge, -0.5, 0.5, g, 0.5, 0.5, g, 0.5, -0.5, g);
   base.push(layer(edge, null, INKA, 1, 1, 'butt'));
   // a fence along the back and the back post of the canopy
-  const fence = new Path2D(), fb = -0.46;
+  const fence = new BPath(), fb = -0.46;
   for (const a of hi ? [-0.5, -1 / 6, 1 / 6, 0.5] : [-0.5, -1 / 6, 1 / 6]) line(fence, a, fb, zt, a, fb, zt + 0.56);
   line(fence, -0.5, fb, zt + 0.56, 0.5, fb, zt + 0.56); line(fence, -0.5, fb, zt + 0.3, 0.5, fb, zt + 0.3);
-  const backPost = line(new Path2D(), 0, -0.5, zt, 0, -0.5, z1);
+  const backPost = line(new BPath(), 0, -0.5, zt, 0, -0.5, z1);
   base.push(layer(fence, null, '#7d8499', 2.8, 1, 'butt'), layer(fence, null, '#f4f6fa', 1.5, 0, 'butt'));
   base.push(layer(backPost, null, '#7d8499', 4, 1, 'butt'), layer(backPost, null, '#f4f6fa', 2.6, 0, 'butt'));
 
   // gates at the front of the platform, and the front post
-  const posts = new Path2D(), bars = new Path2D(), gb = 0.46;
+  const posts = new BPath(), bars = new BPath(), gb = 0.46;
   for (const a of [-0.38, -0.12, 0.12, 0.38]) line(posts, a, gb, zt, a, gb, zt + 0.5);
   line(bars, -0.38, gb, zt + 0.4, -0.12, gb, zt + 0.4); line(bars, 0.12, gb, zt + 0.4, 0.38, gb, zt + 0.4);
-  const frontPost = line(new Path2D(), 0, 0.5, zt, 0, 0.5, z1);
+  const frontPost = line(new BPath(), 0, 0.5, zt, 0, 0.5, z1);
   roof.push(layer(posts, null, '#7d8499', 2.9, 1, 'butt'), layer(bars, null, T.carInk, 3.4, 1, 'butt'));
   roof.push(layer(posts, null, '#f4f6fa', 1.6, 0, 'butt'), layer(bars, null, T.car, 2));
   roof.push(layer(frontPost, null, '#7d8499', 4, 1, 'butt'), layer(frontPost, null, '#f4f6fa', 2.6, 0, 'butt'));
   // the canopy: two sloping halves in stripes of the train's colour, a fascia with bulbs along the front
   const a0 = lo ? -0.57 : -0.5, a1 = hi ? 0.57 : 0.5, rb = 0.6;
-  const half = [[new Path2D(), new Path2D()], [new Path2D(), new Path2D()]];
+  const half = [[new BPath(), new BPath()], [new BPath(), new BPath()]];
   for (let k = 0; k < 4; k++) {
     const s0 = k ? -0.5 + k * 0.25 : a0, s1 = k < 3 ? -0.25 + k * 0.25 : a1;
     poly(half[0][k & 1], s0, -rb, z1, s1, -rb, z1, s1, 0, zr, s0, 0, zr);
@@ -479,29 +575,29 @@ function stationParts(c, p, pi, T, base, roof) {
   const cream = '#fff6e6';
   roof.push(layer(half[0][0], T.car), layer(half[0][1], cream));
   roof.push(layer(half[1][0], shade(T.car, ax ? -0.1 : -0.2)), layer(half[1][1], shade(cream, ax ? -0.07 : -0.14)));
-  roof.push(layer(poly(new Path2D(), a0, rb, z1, a1, rb, z1, a1, rb, zf, a0, rb, zf), shade(T.car, ax ? -0.24 : -0.36)));
-  const ink = new Path2D();
+  roof.push(layer(poly(new BPath(), a0, rb, z1, a1, rb, z1, a1, rb, zf, a0, rb, zf), shade(T.car, ax ? -0.24 : -0.36)));
+  const ink = new BPath();
   line(ink, a0, rb, zf, a1, rb, zf); line(ink, a0, rb, z1, a1, rb, z1); line(ink, a0, -rb, z1, a1, -rb, z1);
   if (lo) line(ink, a0, rb, zf, a0, rb, z1, a0, 0, zr, a0, -rb, z1);
   if (hi) {
     // the open end that faces the viewer is closed with a gable and a round badge
-    const gable = poly(new Path2D(), a1, -rb, zf, a1, -rb, z1, a1, 0, zr, a1, rb, z1, a1, rb, zf);
+    const gable = poly(new BPath(), a1, -rb, zf, a1, -rb, z1, a1, 0, zr, a1, rb, z1, a1, rb, zf);
     roof.push(layer(gable, shade(cream, ax ? -0.16 : -0.08)));
-    const badge = new Path2D();
+    const badge = new BPath();
     badge.arc(X(a1, 0), Y(a1, 0, z1 + 0.14), 3.1, 0, TAU);
     roof.push(layer(badge, T.car, INKA, 1));
     line(ink, a1, rb, zf, a1, rb, z1, a1, 0, zr, a1, -rb, z1, a1, -rb, zf, a1, rb, zf);
   }
   roof.push(layer(ink, null, INKA, 1, 1, 'butt'));
-  const ridge = line(new Path2D(), a0, 0, zr, a1, 0, zr);
+  const ridge = line(new BPath(), a0, 0, zr, a1, 0, zr);
   roof.push(layer(ridge, null, T.carInk, 3.2, 1, 'butt'), layer(ridge, null, cream, 1.8, 0, 'butt'));
-  const bulbs = new Path2D();
+  const bulbs = new BPath();
   for (let k = 0; k < 4; k++) { const a = -0.375 + k * 0.25, x = X(a, rb), y = Y(a, rb, z1 - 0.1); bulbs.moveTo(x + 1.3, y); bulbs.arc(x, y, 1.3, 0, TAU); }
   roof.push(layer(bulbs, '#fff3b0', null, 1, 1));
   if (lo || hi) {
     // a pennant on each end of the ridge
     const a = lo ? a0 + 0.08 : a1 - 0.08, x = X(a, 0), y = Y(a, 0, zr + 0.85);
-    const mast = line(new Path2D(), a, 0, zr, a, 0, zr + 0.85), flag = new Path2D();
+    const mast = line(new BPath(), a, 0, zr, a, 0, zr + 0.85), flag = new BPath();
     flag.moveTo(x, y); flag.lineTo(x + 8, y + 2.6); flag.lineTo(x, y + 5.2); flag.closePath();
     roof.push(layer(mast, null, '#5d6379', 1.2, 1, 'butt'), layer(flag, T.car, INKA, 1, 1));
   }
@@ -512,7 +608,7 @@ export function stationRoof(ctx, c, p) {
   if (!geoFresh(g)) g = p.geo = buildGeo(c, c.pieces.indexOf(p));
   if (!g.roof) return;
   ctx.lineJoin = 'round';
-  paint(ctx, g.roof);
+  paintPart(ctx, g.roofPart || (g.roofPart = { L: g.roof }));
   ctx.lineCap = 'round';
 }
 
