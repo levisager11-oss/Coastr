@@ -88,8 +88,8 @@ function freePics() {
  *  changing (settled false) the pictures already made are stretched; once it settles they are made
  *  afresh at the new scale, a few per frame, the old ones standing in until then. */
 let px = { a: 1, e: 0, f: 0 };
-export function trackPictures(s, settled, where) {
-  px = where;
+export function trackPictures(s, settled, where, until) {
+  px = where; pics.until = until;
   if (settled && s !== pics.scale) { pics.scale = s; pics.gen++; }
   if (!pics.live.length) pics.budget = PIC_BUDGET;
   pics.on = s <= PIC_MAX_SCALE && pics.scale > 0 && pics.scale <= PIC_MAX_SCALE && typeof document !== 'undefined';
@@ -110,7 +110,7 @@ function paintPart(ctx, part) {
     const key = pics.gen * 2 + (fine ? 1 : 0);
     if (pc && pc.dead) pc = part.pic = null;
     if (!pc || pc.key !== key) {
-      if (pics.made < PIC_PER_FRAME) {
+      if (pics.made < PIC_PER_FRAME && performance.now() < pics.until) {
         const box = part.box || (part.box = partBox(part.L));
         const s = pics.scale;
         if (box) {

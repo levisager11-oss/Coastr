@@ -188,6 +188,9 @@ TOKI_KEY="$TOKI_KEY" node /tmp/toki-upload.mjs .
   camera leaves it, the zoom settles, or `S.tv` / `S.pv` change. Only tiles marked in `occl` (higher
   than ground just behind them) are drawn again in order, so they can still hide things. Anything
   in `drawTile` that moves must cope with `time < 0`, which means "for the kept picture".
+  While the camera moves, the next picture is started early, centred further along, and drawn eight
+  rows of tiles per frame (`startGround` / `stepGround`, each slice made to paint at once by `settle`)
+  so it is ready before it is needed; a change to the park still redraws it in one go.
   `look.ground = false` switches the picture off for comparing. `look.q` (0 to 3) lowers the
   drawing resolution and drops small details; `tuneQuality` in `main.js` sets it from measured
   frame times unless `look.auto` is false (down when about one frame in four is late, up again only

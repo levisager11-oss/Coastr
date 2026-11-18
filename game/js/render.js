@@ -151,7 +151,7 @@ const HATS = ['#ef476f', '#ffd23f', '#06d6a0', '#3b8ed0', '#9b5de5'];
 // Guests are drawn from small pictures made once per look and pose (see drawGuest), sized to the screen.
 const GW = 18, GH = 28, GY = 23; // picture size and where the feet are, in world units
 const guestPics = new Map();
-let guestScale = 0;
+let guestScale = 0, picUntil = 0;
 function guestBody(ctx, g, sx, sy, step, hop, cheer, sick, k) {
   ctx.fillStyle = 'rgba(0,0,0,0.18)';
   ctx.beginPath(); ctx.ellipse(sx, sy, 4.4 * k, 2.2 * k, 0, 0, 6.3); ctx.fill();
@@ -218,7 +218,7 @@ function drawGuest(ctx, g, sx, sy, sel, time, rain) {
     if (!poses) { if (guestPics.size > 700) guestPics.clear(); poses = []; guestPics.set(g.look, poses); }
     const pi = sq + 3 + 7 * hq + 28 * (cheer ? 1 : 0) + 56 * sick;
     let cv = poses[pi];
-    if (!cv) {
+    if (!cv && performance.now() < picUntil) {
       const s = guestScale;
       cv = poses[pi] = document.createElement('canvas');
       cv.width = Math.ceil(GW * s); cv.height = Math.ceil(GH * s);
@@ -226,7 +226,8 @@ function drawGuest(ctx, g, sx, sy, sel, time, rain) {
       gc.setTransform(s, 0, 0, s, 0, 0);
       guestBody(gc, g, GW / 2, GY, sq / 3, hq, cheer, sick, k);
     }
-    if (guestScale === px.a) blit(ctx, cv, sx - GW / 2, sy - GY); else ctx.drawImage(cv, sx - GW / 2, sy - GY, GW, GH);
+    if (!cv) guestBody(ctx, g, sx, sy, step, hop, cheer, g.nausea > 70, k);
+    else if (guestScale === px.a) blit(ctx, cv, sx - GW / 2, sy - GY); else ctx.drawImage(cv, sx - GW / 2, sy - GY, GW, GH);
   } else guestBody(ctx, g, sx, sy, step, hop, cheer, g.nausea > 70, k);
   if (g.gift) {
     const cols = ['#ef476f', '#ffd23f', '#06d6a0', '#3b8ed0', '#9b5de5'];
@@ -314,7 +315,7 @@ function glowSprite(rgb) {
 }
 
 // The land or sea around the park, with little strokes that stay put as the camera moves.
-function drawBackdrop(ctx, TH, w, h, z, time) {
+function drawBackdrop(ctx, TH, w, h, z, time, cx = cam.x, cy = cam.y) {
   const key = S.theme + '|' + h;
   if (!farGrad || farKey !== key) {
     farGrad = ctx.createLinearGradient(0, 0, 0, h);
@@ -323,15 +324,15 @@ function drawBackdrop(ctx, TH, w, h, z, time) {
   }
   ctx.fillStyle = farGrad; ctx.fillRect(0, 0, w, h);
   const step = 110 * Math.max(1, Math.ceil(0.55 / z));
-  const x0 = Math.floor((cam.x - w / 2 / z) / step) - 1, x1 = Math.ceil((cam.x + w / 2 / z) / step);
-  const y0 = Math.floor((cam.y - h / 2 / z) / (step / 2)) - 1, y1 = Math.ceil((cam.y + h / 2 / z) / (step / 2));
+  const x0 = Math.floor((cx - w / 2 / z) / step) - 1, x1 = Math.ceil((cx + w / 2 / z) / step);
+  const y0 = Math.floor((cy - h / 2 / z) / (step / 2)) - 1, y1 = Math.ceil((cy + h / 2 / z) / (step / 2));
   ctx.strokeStyle = TH.mark; ctx.lineWidth = Math.max(1.4, 2 * z); ctx.lineCap = 'round';
   ctx.beginPath();
   for (let gy = y0; gy <= y1; gy++) for (let gx = x0; gx <= x1; gx++) {
     const hs = hash(gx, gy);
     if (hs > 0.62) continue;
     const wx = (gx + hash(gy, gx)) * step, wy = (gy + hs) * (step / 2);
-    const px = (wx - cam.x) * z + w / 2, py = (wy - cam.y) * z + h / 2;
+    const px = (wx - cx) * z + w / 2, py = (wy - cy) * z + h / 2;
     const len = (10 + hs * 26) * z * (TH.sea && time ? 0.6 + 0.4 * Math.sin(time * 0.9 + hs * 40) : 1);
     if (TH.sea) { ctx.moveTo(px - len, py); ctx.lineTo(px + len, py); }
     else { ctx.moveTo(px - len, py + 2 * z); ctx.quadraticCurveTo(px, py - 3 * z, px + len, py + 2 * z); }
@@ -352,7 +353,7 @@ export function render(ctx, time, ui) {
   const key = z + ',' + w + ',' + h + ',' + dpr + ',' + S.tv + ',' + S.pv + ',' + S.theme + ',' + detail;
   steady = z === lastZoom ? steady + 1 : 0;
   lastZoom = z;
-  const mw = Math.round(w * 0.25), mh = Math.round(h * 0.25);
+  const mw = Math.round(Math.max(w, h) * 0.25), mh = mw; // the same spare room both ways, also on a narrow phone
   const cached = steady >= 2 && look.ground && typeof document !== 'undefined';
   // The world is placed on whole device pixels. Then the ground picture and every ready-made picture
   // (scenery, track, guests) made at this scale is copied pixel for pixel, which is far cheaper than
@@ -360,9 +361,30 @@ export function render(ctx, time, ui) {
   const A = dpr * z;
   px.a = A; px.e = Math.round(dpr * w / 2 - cam.x * A); px.f = Math.round(dpr * h / 2 - cam.y * A);
   if (cached) {
-    if (key !== groundKey || Math.abs(cam.x - gcx) * z > mw - 2 || Math.abs(cam.y - gcy) * z > mh - 2) {
-      groundKey = key; gcx = cam.x; gcy = cam.y;
-      drawGround(TH, w + 2 * mw, h + 2 * mh, z, dpr, detail);
+    const fits = (cx, cy) => Math.abs(cam.x - cx) * z <= mw - 2 && Math.abs(cam.y - cy) * z <= mh - 2;
+    const nx = nextGround;
+    if (nx && nx.key !== key) nextGround = null;
+    if (key !== groundKey || !fits(gcx, gcy)) {
+      // the next picture takes over if it is ready; otherwise one is drawn now, in one go
+      if (nx && nx.done && nx.key === key && fits(nx.cx, nx.cy)) useGround(nx);
+      else drawGround(TH, w + 2 * mw, h + 2 * mh, z, dpr, detail, key);
+      nextGround = null;
+    } else {
+      // Moving away from the middle of the picture: start the next one, centred further along the
+      // way the camera goes, and draw a few rows of it per frame so it is ready before it is needed.
+      const dx = (cam.x - gcx) * z, dy = (cam.y - gcy) * z;
+      if (!nextGround && (Math.abs(dx) > mw * 0.35 || Math.abs(dy) > mh * 0.35)) {
+        const cx = cam.x + Math.max(-mw * 0.6, Math.min(mw * 0.6, dx)) / z, cy = cam.y + Math.max(-mh * 0.6, Math.min(mh * 0.6, dy)) / z;
+        nextGround = startGround(spareGround || document.createElement('canvas'), TH, w + 2 * mw, h + 2 * mh, z, dpr, detail, cx, cy, key);
+        spareGround = null;
+      }
+      const j = nextGround;
+      if (j) {
+        if (!j.done) { stepGround(j, 8); settle(j.cv); }
+        const dOld = Math.hypot(cam.x - gcx, cam.y - gcy), dNew = Math.hypot(cam.x - j.cx, cam.y - j.cy);
+        if (j.done && dNew < dOld && fits(j.cx, j.cy)) { useGround(j); nextGround = null; }
+        else if (j.done && dNew > dOld + mw * 0.3 / z) { spareGround = j.cv; nextGround = null; } // the camera turned back
+      }
     }
     // copy just the part that is on screen
     const cw = ctx.canvas.width, ch = ctx.canvas.height;
@@ -377,7 +399,8 @@ export function render(ctx, time, ui) {
   frameNo++;
   // still scenery is drawn from ready-made pictures, except close up where the trees' gentle sway shows
   const stamp = (look.q >= 1 || z < 1.5) && z * dpr <= 3;
-  trackPictures(look.pics === false ? 99 : A, steady >= 2, px);
+  picUntil = performance.now() + 3; // time this frame may spend making new pictures
+  trackPictures(look.pics === false ? 99 : A, steady >= 2, px, picUntil);
   if (steady >= 2) stampScale = A;
   if (typeof document === 'undefined' || z * dpr > 3 || look.pics === false) { guestScale = 0; guestPics.clear(); }
   else if (steady >= 2 || !guestScale) {
@@ -773,25 +796,55 @@ function ripple(ctx, x, y, sx, sy, time) {
 // ---------- pictures kept between frames ----------
 let gE = 0, gF = 0;
 let ground = null, groundKey = '', gcx = 0, gcy = 0, lastZoom = 0, steady = 0, frameNo = 0, occlTv = -1;
+// the next ground picture, drawn a few rows per frame ahead of a moving camera (see render)
+let nextGround = null, spareGround = null;
 const occl = new Uint8Array(N * N);
 // The backdrop and every ground tile on screen, drawn once (time < 0 means: nothing that moves).
-function drawGround(TH, w, h, z, dpr, detail) {
-  if (!ground) ground = document.createElement('canvas');
+// startGround sets a picture up around the world point (cx, cy) and stepGround draws n more diagonal
+// rows of tiles into it, back to front; drawGround does it all at once for the picture on screen.
+function startGround(cv, TH, w, h, z, dpr, detail, cx, cy, key) {
   const cw = Math.round(w * dpr), ch = Math.round(h * dpr);
-  if (ground.width !== cw || ground.height !== ch) { ground.width = cw; ground.height = ch; }
-  const g = ground.getContext('2d');
+  if (cv.width !== cw || cv.height !== ch) { cv.width = cw; cv.height = ch; }
+  const g = cv.getContext('2d');
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  farGrad = null; drawBackdrop(g, TH, w, h, z, 0); farGrad = null;
-  gE = Math.round(dpr * w / 2 - cam.x * dpr * z); gF = Math.round(dpr * h / 2 - cam.y * dpr * z);
-  g.setTransform(dpr * z, 0, 0, dpr * z, gE, gF);
-  const wx0 = cam.x - w / 2 / z - 80, wx1 = cam.x + w / 2 / z + 80, wy0 = cam.y - h / 2 / z - 90, wy1 = cam.y + h / 2 / z + 150;
-  for (let d = 0; d <= 2 * N - 2; d++) {
+  farGrad = null; drawBackdrop(g, TH, w, h, z, 0, cx, cy); farGrad = null;
+  return {
+    cv, g, TH, z, A: dpr * z, detail, cx, cy, key, d: 0, done: false,
+    E: Math.round(dpr * w / 2 - cx * dpr * z), F: Math.round(dpr * h / 2 - cy * dpr * z),
+    wx0: cx - w / 2 / z - 80, wx1: cx + w / 2 / z + 80, wy0: cy - h / 2 / z - 90, wy1: cy + h / 2 / z + 150,
+  };
+}
+function stepGround(j, n) {
+  j.g.setTransform(j.A, 0, 0, j.A, j.E, j.F);
+  const end = Math.min(2 * N - 1, j.d + n);
+  for (; j.d < end; j.d++) {
+    const d = j.d;
     for (let x = Math.max(0, d - N + 1); x <= Math.min(N - 1, d); x++) {
       const y = d - x, i = idx(x, y), he = heff(i), sx = isoX(x, y), sy = isoY(x, y, he);
-      if (sx < wx0 || sx > wx1 || sy < wy0 || sy > wy1) continue;
-      drawTile(g, TH, x, y, i, he, sx, sy, -1, detail);
+      if (sx < j.wx0 || sx > j.wx1 || sy < j.wy0 || sy > j.wy1) continue;
+      drawTile(j.g, j.TH, x, y, i, he, sx, sy, -1, j.detail);
     }
   }
+  j.done = j.d >= 2 * N - 1;
+  return j.done;
+}
+// Canvas drawing is only recorded at first and painted when the picture is next used. Copying it into
+// a one-pixel canvas makes the browser paint what has been drawn so far now, a slice per frame,
+// instead of all at once in the frame the picture first goes on screen.
+let settleCv = null;
+function settle(cv) {
+  if (!settleCv) { settleCv = document.createElement('canvas'); settleCv.width = settleCv.height = 1; }
+  settleCv.getContext('2d').drawImage(cv, 0, 0, 1, 1);
+}
+function useGround(j) {
+  if (ground && ground !== j.cv) spareGround = ground;
+  ground = j.cv; gE = j.E; gF = j.F; gcx = j.cx; gcy = j.cy; groundKey = j.key;
+}
+function drawGround(TH, w, h, z, dpr, detail, key) {
+  const cv = ground || document.createElement('canvas');
+  const j = startGround(cv, TH, w, h, z, dpr, detail, cam.x, cam.y, key);
+  stepGround(j, 2 * N);
+  useGround(j);
 }
 // A tile has to be drawn again on top of the ground picture only if it stands higher than ground just
 // behind it, because then it can hide the feet of something standing there.
