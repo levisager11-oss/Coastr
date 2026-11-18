@@ -32,7 +32,7 @@ export function newGame(mode, scenario) {
     unlocked: {}, research: { level: 1, pts: 0, done: 0 },
     goal: 0, goalsDone: false, stars: 0, ach: {}, tut: 0, marketing: 0, turnedAway: 0,
     fin: { cur: {}, last: {} }, thoughts: {}, sceneryCount: 0, sentValue: 0, sentGuests: 0,
-    names: {}, wx: { kind: 'sun', t: 90 }, event: null, evNext: 260, yr: { guests: 0, income: 0, peak: 0 }, awards: {},
+    names: {}, wx: { kind: 'sun', t: 90 }, event: null, evNext: 260, yr: { guests: 0, income: 0, peak: 0 }, awards: {}, name: '',
   });
   for (const u of [...START_UNLOCKS, ...SC.extra]) S.unlocked[u] = 1;
   if (S.sandbox) { unlockAll(); S.tut = 99; }
@@ -495,7 +495,7 @@ export function serialize() {
     rating: S.rating, peakGuests: S.peakGuests, unlocked: S.unlocked, research: S.research, goal: S.goal,
     goalsDone: S.goalsDone, stars: S.stars, ach: S.ach, tut: S.tut, marketing: S.marketing, fin: S.fin, names: S.names,
     guestCount: S.guests.length, sentValue: S.sentValue, sentGuests: S.sentGuests, wx: S.wx,
-    event: S.event, evNext: S.evNext, yr: S.yr, awards: S.awards,
+    event: S.event, evNext: S.evNext, yr: S.yr, awards: S.awards, name: S.name,
   };
 }
 export function deserialize(d) {
@@ -522,7 +522,7 @@ export function deserialize(d) {
   }
   for (const k of ['nextId', 'cash', 'loan', 'fee', 'open', 'time', 'rating', 'peakGuests', 'unlocked',
     'research', 'goal', 'goalsDone', 'stars', 'ach', 'tut', 'marketing', 'fin', 'names', 'sentValue', 'sentGuests', 'wx',
-    'event', 'evNext', 'yr', 'awards']) {
+    'event', 'evNext', 'yr', 'awards', 'name']) {
     if (d[k] !== undefined) S[k] = d[k];
   }
   if (S.sandbox) unlockAll(); // things added to the game since this park was saved
@@ -531,6 +531,27 @@ export function deserialize(d) {
   countScenery();
   S.pv++;
   return S;
+}
+
+/** The map layers of a saved park, for a small picture of it in the list of parks. */
+export function saveMap(d) {
+  const n = d.n || OLD_N, rd = d.rle ? decR : dec, ox = (N - n) >> 1, oy = N - n;
+  const m = { theme: (SCENARIOS[d.sc] || SCENARIOS.meadows).theme };
+  for (const k of ['h', 'water', 'path', 'scn']) {
+    const old = rd(d[k] || '', new Uint8Array(n * n));
+    if (n === N) { m[k] = old; continue; }
+    const a = m[k] = new Uint8Array(N * N);
+    if (k === 'h') a.fill(BASE_H);
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) a[idx(x + ox, y + oy)] = old[x + y * n];
+  }
+  // rides and track show up as coloured spots
+  m.obj = new Uint8Array(N * N);
+  const mark = (x, y, v) => { if (x >= 0 && y >= 0 && x < N && y < N) m.obj[idx(x, y)] = v; };
+  for (const o of d.objs || []) {
+    if (o.kind === 'coaster') { for (const p of o.pieces || []) mark(p.x + ox, p.y + oy, 2); }
+    else for (let j = 0; j < (o.h || 1); j++) for (let i = 0; i < (o.w || 1); i++) mark(o.x + ox + i, o.y + oy + j, o.kind === 'stall' ? 3 : 1);
+  }
+  return m;
 }
 
 export { COASTERS };

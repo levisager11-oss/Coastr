@@ -26,7 +26,8 @@ Play it on Toki: https://playtoki.app/game/coastr
 - **A living park**: day and night with lights, rain and snow, an evening firework show, guests who
   show what they think, queues you can see.
 - Lines of path and whole areas of land are built with one drag, and the last step can be undone.
-- Saves automatically in the browser, one park per scenario. On Toki, park value and peak guest
+- Saves automatically in the browser. Up to eight parks live side by side in "Your parks", each
+  with a little map, its date, guests and cash; parks can be renamed, copied and deleted. On Toki, park value and peak guest
   count go to two high-score lists and there are 19 achievements.
 
 ## Run it locally
@@ -74,4 +75,4 @@ shows the game. There is no build step and no test suite; run the game to check 
 | `game/js/ui.js` | Toolbar, panels, coaster builder, mouse and touch input |
 | `game/js/i18n.js` | All text, English and German |
 | `game/js/audio.js` | Sound effects and music |
-| `game/js/main.js` | Menu and scenario list, game loop, saves and stars, Toki hooks |
+| `game/js/main.js` | Menu, scenario list and the list of saved parks, game loop, saves and stars, Toki hooks |

@@ -1,14 +1,14 @@
 // Start-up, main menu, the game loop, saving, and the Toki hooks.
-import { S, newGame, serialize, deserialize, events, parkValue, idx, previewMap } from './world.js';
+import { S, newGame, serialize, deserialize, events, parkValue, idx, previewMap, saveMap } from './world.js';
 import { tick, initAfterLoad } from './sim.js';
 import { render, cam, view, look, isoX, isoY, toScreen, mapThumb } from './render.js';
 import {
   ui, initUI, resetUI, buildHUD, refreshHUD, handleEvents, moveCamera, centerOn, toast, dialog, showHelp, updateTestHud, closePanel,
   starsHTML, updateSounds,
 } from './ui.js';
-import { SCENARIOS, SCENARIO_ORDER } from './data.js';
+import { SCENARIOS, SCENARIO_ORDER, DAY_LEN, MONTH_DAYS } from './data.js';
 import { updateFx, clearFx } from './fx.js';
-import { t, setLang, detectLang, lang } from './i18n.js';
+import { t, setLang, detectLang, lang, money, num } from './i18n.js';
 import { audio, setMusic, setSfx, sfx, suspend, unlock } from './audio.js';
 import { icon } from './icons.js';
 import { buildDemo } from './demo.js';
@@ -18,8 +18,14 @@ const ctx = canvas.getContext('2d');
 const menuEl = document.getElementById('menu');
 const hudEl = document.getElementById('hud');
 const KEY = { settings: 'coastr.settings', progress: 'coastr.progress' };
-// one saved park per scenario, plus one sandbox; the first scenario keeps the key of the original career
-const saveKey = (mode, sc) => 'coastr.save.' + (mode === 'sandbox' ? 'sandbox' : sc === 'meadows' ? 'career' : sc);
+// Every saved park is its own key starting with SAVE. Older versions kept one park per scenario
+// ('coastr.save.career' for the first, 'coastr.save.<scenario>', 'coastr.save.sandbox'); those keys
+// are simply parks in the list too, so nothing has to be moved.
+const SAVE = 'coastr.save.';
+const MAX_PARKS = 8;
+const legacyKey = (mode, sc) => SAVE + (mode === 'sandbox' ? 'sandbox' : sc === 'meadows' ? 'career' : sc);
+const newKey = () => SAVE + 'p' + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36);
+let curKey = null, saveWarned = false;
 let playing = false;
 // shown inside another page (the game page on Toki)?
 let embedded = false;
@@ -32,17 +38,119 @@ function store(key, value) { try { localStorage.setItem(key, JSON.stringify(valu
 function load(key) { try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
 const settings = Object.assign({ lang: detectLang(), music: true, sfx: true, night: true }, load(KEY.settings) || {});
 function saveSettings() { store(KEY.settings, { lang, music: audio.music, sfx: audio.sfx, night: look.night }); }
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 function saveGame(show) {
-  if (!playing) return;
-  const ok = store(saveKey(S.mode, S.sc), serialize());
-  if (show && ok) toast(t('saved'), 'good');
+  if (!playing || !curKey) return;
+  const d = serialize();
+  d.at = Date.now();
+  const ok = store(curKey, d);
+  parkCache = null;
+  if (show || (!ok && !saveWarned)) toast(t(ok ? 'saved' : 'save_fail'), ok ? 'good' : 'bad');
+  if (!ok) saveWarned = true;
+}
+
+// ---------- the list of saved parks ----------
+let parkCache = null;
+/** All saved parks, the one played most recently first: [{ key, d }]. */
+function parks() {
+  if (parkCache) return parkCache;
+  const out = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(SAVE)) continue;
+      const d = load(k);
+      if (d && d.h && d.objs) out.push({ key: k, d });
+    }
+  } catch (e) { /* no storage: no parks */ }
+  out.sort((a, b) => (b.d.at || 0) - (a.d.at || 0));
+  return (parkCache = out);
+}
+const scOf = (d) => (SCENARIOS[d.sc] ? d.sc : 'meadows');
+const nameOf = (d) => d.name || t('sc_' + scOf(d));
+const parksOf = (mode, sc) => parks().filter((p) => p.d.mode === mode && (!sc || scOf(p.d) === sc));
+function lastPark() {
+  const all = parks(), l = progress.last;
+  if (!l) return all[0] || null;
+  const key = l.key || legacyKey(l.mode, l.sc);
+  return all.find((p) => p.key === key) || all[0] || null;
+}
+function dateOf(time) {
+  const day = Math.floor((time || 0) / DAY_LEN), m = Math.floor(day / MONTH_DAYS);
+  return t('date', (day % MONTH_DAYS) + 1, t('months')[(m + 2) % 12], Math.floor((m + 2) / 12) + 1);
+}
+const parkThumbs = new Map();
+function parkThumb(p) {
+  const c0 = parkThumbs.get(p.key);
+  if (c0 && c0.at === p.d.at) return c0.c;
+  const c = document.createElement('canvas');
+  c.width = 168; c.height = 104;
+  const g = c.getContext('2d');
+  g.scale(2, 2);
+  try { mapThumb(g, saveMap(p.d), 84, 52); } catch (e) { /* an odd save: leave the picture empty */ }
+  parkThumbs.set(p.key, { at: p.d.at, c });
+  return c;
+}
+/** Ask for a park name. Resolves to the new name, or null when cancelled. */
+async function askName(cur) {
+  const p = dialog(`<h2>${esc(t('park_name'))}</h2><p>${esc(t('park_name_q'))}</p>
+    <input class="name-in" type="text" maxlength="24" value="${esc(cur)}" autocomplete="off" spellcheck="false" enterkeyhint="done">`,
+  [{ label: t('b_cancel'), value: 0 }, { label: t('ok'), cls: 'yellow', value: 1 }]);
+  const inp = document.querySelector('#modal .name-in');
+  if (inp) {
+    inp.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== 'Escape') return;
+      e.preventDefault();
+      const b = document.querySelector(`#modal [data-i="${e.key === 'Enter' ? 1 : 0}"]`);
+      if (b) b.click();
+    });
+    setTimeout(() => { try { inp.focus(); inp.select(); } catch (e) { /* ignore */ } }, 30);
+  }
+  const a = await p;
+  return a === 1 && inp ? inp.value.replace(/\s+/g, ' ').trim().slice(0, 24) : null;
+}
+function parksFull() {
+  if (parks().length < MAX_PARKS) return false;
+  dialog(`<h2>${esc(t('m_parks'))}</h2><p>${esc(t('parks_full', MAX_PARKS))}</p>`,
+    [{ label: t('b_cancel'), value: 0 }, { label: t('m_parks'), cls: 'yellow', value: 1 }])
+    .then((a) => { if (a === 1) { menuView = 'parks'; buildMenu(); } });
+  return true;
+}
+function newPark(mode, sc) { if (!parksFull()) startGame(mode, true, sc); }
+async function renamePark(key) {
+  const d = load(key);
+  if (!d) return;
+  const v = await askName(nameOf(d));
+  if (v === null) return;
+  d.name = v === t('sc_' + scOf(d)) ? '' : v;
+  store(key, d); parkCache = null;
+}
+function copyPark(key) {
+  if (parksFull()) return;
+  const d = load(key);
+  if (!d) return;
+  d.name = t('park_copy_name', nameOf(d)).slice(0, 30);
+  d.at = Date.now();
+  d.sentValue = 0; d.sentGuests = 0;
+  // (the menu has no toasts: the new park simply shows up at the top of the list)
+  if (!store(newKey(), d)) dialog(`<p>${esc(t('save_fail'))}</p>`, [{ label: t('ok'), cls: 'yellow', value: 1 }]);
+  parkCache = null;
+}
+async function deletePark(key) {
+  const d = load(key);
+  if (!d) return;
+  const a = await dialog(`<h2>${esc(t('park_delete'))}</h2><p>${esc(t('park_del_q', nameOf(d)))}</p>`,
+    [{ label: t('b_cancel'), value: 0 }, { label: t('park_delete'), cls: 'red', value: 1 }]);
+  if (a !== 1) return;
+  noteStars(); // keep the stars this park earned
+  try { localStorage.removeItem(key); } catch (e) { /* ignore */ }
+  parkCache = null; parkThumbs.delete(key);
 }
 // Stars earned in each scenario. Kept apart from the saved parks, so starting a park again does not lose them.
 const progress = Object.assign({ stars: {}, last: null, sent: {} }, load(KEY.progress) || {});
 function starsOf(sc) {
   let n = progress.stars[sc] || 0;
-  const d = load(saveKey('career', sc));
-  if (d && d.mode === 'career') n = Math.max(n, SCENARIOS[sc].stars.filter((k) => (d.goal || 0) >= k).length);
+  for (const { d } of parksOf('career', sc)) n = Math.max(n, SCENARIOS[sc].stars.filter((k) => (d.goal || 0) >= k).length);
   return n;
 }
 const totalStars = () => SCENARIO_ORDER.reduce((a, sc) => a + starsOf(sc), 0);
@@ -112,25 +220,28 @@ function thumbFor(sc) {
   }
   return c;
 }
+let menuView = 'main';
 function buildMenu() {
   menuSmall = view.h < 420;
+  parkCache = null; // Toki may have brought back saves from the player's account since the last look
+  if (menuView === 'parks') { buildParks(); return; }
   const sw = (on) => (on ? t('on') : t('off'));
-  const total = totalStars(), last = progress.last;
-  const lastSave = last && load(saveKey(last.mode, last.sc));
+  const total = totalStars(), lp = lastPark(), all = parks();
   let cards = '';
   for (const sc of SCENARIO_ORDER) {
-    const SC = SCENARIOS[sc], locked = total < SC.need, has = !!load(saveKey('career', sc));
+    const SC = SCENARIOS[sc], locked = total < SC.need, has = parksOf('career', sc).length > 0;
     cards += `<button class="m-sc${locked ? ' locked' : ''}" data-m="sc:${sc}"><i data-th="${sc}"></i><div><b>${t('sc_' + sc)}</b>
       <span>${locked ? icon('lock') + t('sc_need', SC.need) : t(has ? 'sc_saved' : 'scd_' + sc)}</span></div><em class="stars">${starsHTML(starsOf(sc))}</em></button>`;
   }
-  const hasSandbox = !!load(saveKey('sandbox'));
+  const hasSandbox = parksOf('sandbox').length > 0;
   cards += `<button class="m-sc sand" data-m="sandbox"><i>${icon('wand')}</i><div><b>${t('m_sandbox')}</b><span>${t(hasSandbox ? 'sc_saved' : 'm_sandbox_desc')}</span></div></button>`;
   menuEl.innerHTML = `<div class="m-card"><div class="m-head">
     <div class="logo">Coast<i>r</i></div>
     <div class="tag">${t('tagline')}</div>
     ${embedded && view.h < 420 ? `<div class="tip">${t('tip_fullscreen')}</div>` : ''}
   </div><div class="m-list">
-    ${lastSave ? `<button class="m-btn main" data-m="continue"><b>${t('m_continue')}</b><span>${last.mode === 'sandbox' ? t('m_sandbox') + ' · ' : ''}${t('sc_' + (lastSave.sc || 'meadows'))}</span></button>` : ''}
+    ${lp ? `<div class="m-top"><button class="m-btn main" data-m="continue"><b>${t('m_continue')}</b><span>${esc(nameOf(lp.d))}${lp.d.mode === 'sandbox' ? ' · ' + t('m_sandbox') : ''}</span></button>
+      <button class="m-btn parks" data-m="parks"><b>${icon('folder')}${t('m_parks')}</b><span>${t('m_parks_n', all.length, MAX_PARKS)}</span></button></div>` : ''}
     <div class="m-scs">${cards}</div>
     <div class="m-row">
       <button class="btn" data-m="help">${icon('help')}${t('m_help')}</button>
@@ -143,6 +254,27 @@ function buildMenu() {
   </div></div>`;
   for (const el of menuEl.querySelectorAll('[data-th]')) el.appendChild(thumbFor(el.dataset.th));
 }
+/** The list of saved parks: play, rename, copy or delete each one. */
+function buildParks() {
+  const all = parks();
+  const rows = all.map((p, n) => {
+    const d = p.d, sand = d.mode === 'sandbox', sc = scOf(d);
+    const stars = sand ? '' : `<em class="stars">${starsHTML(SCENARIOS[sc].stars.filter((k) => (d.goal || 0) >= k).length)}</em>`;
+    const line1 = (d.name ? t('sc_' + sc) + ' · ' : '') + t(sand ? 'm_sandbox' : 'm_career');
+    // the facts may wrap onto a second line on narrow screens, but never in the middle of one
+    const nb = (x) => `<i>${esc(x).replace(/ /g, '&nbsp;')}</i>`;
+    const facts = [nb(dateOf(d.time)), `<i>${icon('guest')}${num(d.guestCount || 0)}</i>`, ...(sand ? [] : [nb(money(Math.floor(d.cash || 0)))])];
+    return `<div class="m-park"><button class="m-pk" data-m="play:${n}"><i data-pt="${n}"></i><div><b>${esc(nameOf(d))}</b>
+      <span class="l1"><em>${esc(line1)}</em>${stars}</span><span class="l2">${facts.join(' · ')}</span></div></button>
+      <div class="m-pa"><button class="btn icon flat" data-m="ren:${n}" aria-label="${esc(t('park_rename'))}" title="${esc(t('park_rename'))}">${icon('pen')}</button>
+      <button class="btn icon flat" data-m="cp:${n}" aria-label="${esc(t('park_copy'))}" title="${esc(t('park_copy'))}">${icon('copy')}</button>
+      <button class="btn icon flat del" data-m="del:${n}" aria-label="${esc(t('park_delete'))}" title="${esc(t('park_delete'))}">${icon('trash')}</button></div></div>`;
+  }).join('');
+  menuEl.innerHTML = `<div class="m-card m-parks"><div class="m-ph"><button class="btn icon" data-m="back" aria-label="${esc(t('b_back'))}">${icon('back')}</button>
+    <h2>${t('m_parks')}</h2><span>${t('m_parks_n', all.length, MAX_PARKS)}</span></div>
+    <div class="m-plist">${rows || `<p class="m-none">${esc(t('parks_none'))}</p>`}</div></div>`;
+  for (const el of menuEl.querySelectorAll('[data-pt]')) { const p = all[+el.dataset.pt]; if (p) el.appendChild(parkThumb(p)); }
+}
 /** Ask which map a new sandbox park should use. */
 function pickMap() {
   return dialog(`<h2>${t('m_sandbox')}</h2><p>${t('sandbox_map')}</p>`,
@@ -152,45 +284,62 @@ menuEl.addEventListener('click', async (e) => {
   const b = e.target.closest('[data-m]');
   if (!b) return;
   unlock(); sfx('click');
-  const m = b.dataset.m;
-  if (m === 'help') showHelp();
-  else if (m === 'lang') hooks.lang();
-  else if (m === 'music') { hooks.music(); buildMenu(); }
-  else if (m === 'sfx') { hooks.sfx(); buildMenu(); }
-  else if (m === 'continue') startGame(progress.last.mode, false, progress.last.sc);
-  else if (m === 'sandbox') {
-    const saved = load(saveKey('sandbox'));
-    if (saved) {
-      const a = await dialog(`<h2>${t('m_sandbox')}</h2><p>${t('sc_have', t('sc_' + (saved.sc || 'meadows')))}</p>`,
-        [{ label: t('b_cancel'), value: 0 }, { label: t('sc_restart'), value: 2 }, { label: t('m_continue_short'), cls: 'yellow', value: 1 }]);
-      if (a === 1) { startGame('sandbox', false, saved.sc); return; }
+  const m = b.dataset.m, colon = m.indexOf(':'), act = colon < 0 ? m : m.slice(0, colon), arg = m.slice(colon + 1);
+  if (act === 'help') showHelp();
+  else if (act === 'lang') hooks.lang();
+  else if (act === 'music') { hooks.music(); buildMenu(); }
+  else if (act === 'sfx') { hooks.sfx(); buildMenu(); }
+  else if (act === 'continue') { const p = lastPark(); if (p) startGame(p.d.mode, false, scOf(p.d), p.key); }
+  else if (act === 'parks') { menuView = 'parks'; buildMenu(); menuEl.scrollTop = 0; }
+  else if (act === 'back') { menuView = 'main'; buildMenu(); }
+  else if (act === 'play' || act === 'ren' || act === 'cp' || act === 'del') {
+    const p = parks()[+arg];
+    if (!p) return;
+    if (act === 'play') { startGame(p.d.mode, false, scOf(p.d), p.key); return; }
+    if (act === 'ren') await renamePark(p.key);
+    else if (act === 'cp') copyPark(p.key);
+    else await deletePark(p.key);
+    if (!playing) buildMenu();
+  } else if (act === 'sandbox') {
+    const mine = parksOf('sandbox');
+    if (mine.length) {
+      const a = await dialog(`<h2>${t('m_sandbox')}</h2><p>${esc(t('sc_have', nameOf(mine[0].d)))}</p>`,
+        [{ label: t('b_cancel'), value: 0 }, { label: t('park_new'), value: 2 }, { label: t('m_continue_short'), cls: 'yellow', value: 1 }]);
+      if (a === 1) { startGame('sandbox', false, scOf(mine[0].d), mine[0].key); return; }
       if (a !== 2) return;
     }
+    if (parks().length >= MAX_PARKS) { parksFull(); return; }
     const sc = await pickMap();
-    if (sc) startGame('sandbox', true, sc);
-  } else if (m.startsWith('sc:')) {
-    const sc = m.slice(3), SC = SCENARIOS[sc];
+    if (sc) newPark('sandbox', sc);
+  } else if (act === 'sc') {
+    const sc = arg, SC = SCENARIOS[sc];
+    if (!SC) return;
     if (totalStars() < SC.need) {
       dialog(`<h2>${t('sc_' + sc)}</h2><p>${t('sc_locked', SC.need, totalStars())}</p>`, [{ label: t('ok'), cls: 'yellow', value: 1 }]);
       return;
     }
-    if (load(saveKey('career', sc))) {
-      const a = await dialog(`<h2>${t('sc_' + sc)}</h2><p>${t('scd_' + sc)}</p><p>${t('confirm_new')}</p>`,
-        [{ label: t('b_cancel'), value: 0 }, { label: t('sc_restart'), value: 2 }, { label: t('m_continue_short'), cls: 'yellow', value: 1 }]);
-      if (a === 1) startGame('career', false, sc);
-      else if (a === 2) startGame('career', true, sc);
-    } else startGame('career', true, sc);
+    const mine = parksOf('career', sc);
+    if (mine.length) {
+      const a = await dialog(`<h2>${t('sc_' + sc)}</h2><p>${t('scd_' + sc)}</p><p>${esc(t('sc_have', nameOf(mine[0].d)))}</p>`,
+        [{ label: t('b_cancel'), value: 0 }, { label: t('park_new'), value: 2 }, { label: t('m_continue_short'), cls: 'yellow', value: 1 }]);
+      if (a === 1) startGame('career', false, sc, mine[0].key);
+      else if (a === 2) newPark('career', sc);
+    } else newPark('career', sc);
   }
 });
 
-/** Start or continue a park. sc = scenario id (the map); the first one is the original career. */
-function startGame(mode, fresh, sc = 'meadows') {
-  const saved = fresh ? null : load(saveKey(mode, sc));
+/** Start or continue a park. sc = scenario id (the map); the first one is the original career.
+ *  key = the saved park to load; without it the latest park of that mode and map is continued.
+ *  A fresh park always gets a new slot, and so does a save that will not load (it is kept as it is). */
+function startGame(mode, fresh, sc = 'meadows', key = null) {
+  if (!fresh && !key) { const p = parksOf(mode, sc)[0]; key = p ? p.key : null; }
+  const saved = !fresh && key ? load(key) : null;
   let ok = false;
   if (saved) {
     try { deserialize(saved); ok = true; } catch (e) { ok = false; }
   }
-  if (!ok) newGame(mode, sc);
+  if (!ok) { newGame(mode, sc); key = newKey(); }
+  curKey = key; saveWarned = false;
   initAfterLoad();
   S.speed = 1;
   events.length = 0;
@@ -200,13 +349,13 @@ function startGame(mode, fresh, sc = 'meadows') {
   resetUI();
   cam.zoom = view.w < 600 ? 0.8 : 1;
   centerOn(S.ent.x + 0.5, S.ent.y - 6, S.h[idx(S.ent.x, S.ent.y - 6)] || 2);
-  progress.last = { mode, sc: S.sc };
+  progress.last = { key, mode: S.mode, sc: S.sc };
   store(KEY.progress, progress);
   saveGame(false);
 }
 function toMenu() {
   saveGame(false); sendScores(); noteStars();
-  playing = false;
+  playing = false; curKey = null; menuView = 'main';
   hudEl.hidden = true; menuEl.hidden = false;
   closePanel();
   clearFx();
@@ -228,6 +377,12 @@ const hooks = {
   sfx() { setSfx(!audio.sfx); saveSettings(); },
   lang() { setLang(lang === 'en' ? 'de' : 'en'); saveSettings(); if (playing) buildHUD(); else buildMenu(); },
   save() { saveGame(true); },
+  async rename() {
+    const v = await askName(S.name || t('sc_' + S.sc));
+    if (v === null || !playing) return;
+    S.name = v === t('sc_' + S.sc) ? '' : v;
+    saveGame(false);
+  },
   tomenu: toMenu,
   month() { saveGame(false); sendScores(); },
   night() { look.night = !look.night; saveSettings(); },

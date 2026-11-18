@@ -996,6 +996,8 @@ export function miniMapTile(px, py, w, h) {
 }
 
 /** A tiny picture of a whole map for the scenario list. m = {h, water, scn, path, theme}. */
+// rides, coaster track and stalls in the small pictures of saved parks
+const THUMB_OBJ = [null, '#ef476f', '#7b2cbf', '#ff9f1c'];
 export function mapThumb(ctx, m, w, h) {
   const TH = themeOf(m.theme), sx = w / (2 * N), sy = (h - 10) / (2 * N);
   const g = ctx.createLinearGradient(0, 0, 0, h);
@@ -1005,7 +1007,8 @@ export function mapThumb(ctx, m, w, h) {
     for (let x = Math.max(0, d - N + 1); x <= Math.min(N - 1, d); x++) {
       const y = d - x, i = idx(x, y), z = m.h[i];
       const px = w / 2 + (x - y) * sx, py = 8 + (x + y) * sy - (z - 2) * 1.6;
-      ctx.fillStyle = m.water[i] ? TH.water : m.path[i] ? TH.path : m.scn[i] ? shade(TH.pal[Math.min(6, z)][0], -0.28) : TH.pal[Math.min(6, z)][(x + y) & 1];
+      const ob = m.obj ? m.obj[i] : 0;
+      ctx.fillStyle = ob ? THUMB_OBJ[ob] : m.water[i] ? TH.water : m.path[i] ? TH.path : m.scn[i] ? shade(TH.pal[Math.min(6, z)][0], -0.28) : TH.pal[Math.min(6, z)][(x + y) & 1];
       ctx.fillRect(px - sx, py, sx * 2 + 0.6, sy * 2 + 0.6 + (z > 2 ? (z - 2) * 1.6 : 0));
     }
   }

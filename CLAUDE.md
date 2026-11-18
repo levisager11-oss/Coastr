@@ -92,7 +92,7 @@ TOKI_KEY="$TOKI_KEY" node /tmp/toki-upload.mjs .
 - Maps are generated in `genTerrain` (`world.js`) from the `MAPS` table. Themes (colours of land,
   water, cliffs and the backdrop) are the `THEMES` table in `render.js`.
 - Stars live in `localStorage` under `coastr.progress`, apart from the saved parks, so starting a
-  park again does not lose them.
+  park again or deleting one does not lose them. `starsOf` also looks at every saved career park.
 
 **State**
 - All game state lives in the single mutable object `S` in `world.js`. Change it through the
@@ -130,8 +130,15 @@ TOKI_KEY="$TOKI_KEY" node /tmp/toki-upload.mjs .
   geometry (`piece.geo`) and re-register tiles in `S.trk`.
 
 **Saves**
-- `localStorage` keys: `coastr.save.career` (the first scenario), `coastr.save.<scenario>`,
-  `coastr.save.sandbox`, `coastr.settings`, `coastr.progress`, `coastr.designs`.
+- Every key starting with `coastr.save.` is one saved park; the main menu lists them all ("Your
+  parks", at most `MAX_PARKS` = 8, newest first by the save's `at` time). New parks get
+  `coastr.save.p<random>`. Older versions kept one park per scenario under `coastr.save.career`,
+  `coastr.save.<scenario>` and `coastr.save.sandbox`; those keys are simply parks in the list, so
+  nothing is migrated. The park being played is `curKey` in `main.js`; `progress.last.key` is the
+  one "Continue" opens. A save that fails to load starts a new park in a new slot and is left alone.
+- Other keys: `coastr.settings`, `coastr.progress`, `coastr.designs`.
+- `S.name` is the player's name for the park ('' means "use the scenario's name", so it follows the
+  language).
 - Save format is `v: 2` with `n` (map size), `sc` (scenario) and `rle: 1` (map layers stored as
   run-length pairs). Saves without `n` are from the 40x40 map and are shifted to the front centre
   of the current map in `deserialize`; saves without `rle` have one character per tile; saves

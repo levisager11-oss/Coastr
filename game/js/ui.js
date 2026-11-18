@@ -821,6 +821,7 @@ function panelHTML() {
   }
   if (p.type === 'settings') {
     return head(t('settings')) + `<div class="p-body">
+      <div class="row pname"><b data-k="pname"></b><button class="btn flat" data-act="rename">${icon('pen')}${esc(t('park_rename'))}</button></div>
       <div class="row"><span>${esc(t('s_music'))}</span><button class="switch" data-act="music" data-k="music"></button></div>
       <div class="row"><span>${esc(t('s_sfx'))}</span><button class="switch" data-act="sfx" data-k="sfx"></button></div>
       <div class="row"><span>${esc(t('s_night'))}</span><button class="switch" data-act="night" data-k="night"></button></div>
@@ -938,6 +939,7 @@ function panelValues() {
     for (const id in S.objs) if (S.objs[id].kind !== 'stall') html['q' + id] = 1;
     return { v, w, show, html, dots: 1 };
   } else if (p.type === 'settings') {
+    v.pname = S.name || t('sc_' + S.sc);
     v.music = t(audio.music ? 'on' : 'off'); v.sfx = t(audio.sfx ? 'on' : 'off'); v.night = t(look.night ? 'on' : 'off');
     return { v, w, show, cls: { music: audio.music, sfx: audio.sfx, night: look.night } };
   }
@@ -1051,7 +1053,7 @@ function onPanel(e) {
   } else if (panel.type === 'research') {
     if (a.startsWith('rl')) S.research.level = +a.slice(2);
   } else if (panel.type === 'settings') {
-    if (a === 'music' || a === 'sfx' || a === 'lang' || a === 'save' || a === 'tomenu' || a === 'night') ui.hooks[a]();
+    if (a === 'music' || a === 'sfx' || a === 'lang' || a === 'save' || a === 'tomenu' || a === 'night' || a === 'rename') ui.hooks[a]();
     else if (a === 'help') showHelp();
   }
   refreshPanel();
