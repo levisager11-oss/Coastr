@@ -92,7 +92,7 @@ TOKI_KEY="$TOKI_KEY" node /tmp/toki-upload.mjs .
 - Maps are generated in `genTerrain` (`world.js`) from the `MAPS` table. Themes (colours of land,
   water, cliffs and the backdrop) are the `THEMES` table in `render.js`.
 - Stars live in `localStorage` under `coastr.progress`, apart from the saved parks, so starting a
-  park again does not lose them.
+  park again or deleting one does not lose them. `starsOf` also looks at every saved career park.
 
 **State**
 - All game state lives in the single mutable object `S` in `world.js`. Change it through the
@@ -124,14 +124,24 @@ TOKI_KEY="$TOKI_KEY" node /tmp/toki-upload.mjs .
   `canPlaceDesign`, `placeDesign` in `coaster.js`). The ready-made ones are `DESIGNS` in `data.js`;
   each must close on flat ground, so re-check them (build one with `placeDesign` in Node) after any
   change to piece geometry. Saved ones live in `localStorage` under `coastr.designs`.
+- No support (column or trestle bent) stands on a tile with a path or scenery: the track spans it.
+  So a piece's cached drawing also depends on those tiles; `geoFresh` in `track.js` checks the
+  tiles it looked at whenever `S.pv` changes.
 - Track and train pictures are in `track.js`. Its geometry cache (`piece.geo`) must hold everything
   that can be worked out once; drawing a piece should be a handful of fills and strokes.
 - Edit tracks through `addPiece` / `undoPiece` / `autoFinish`, which also clear the cached drawing
   geometry (`piece.geo`) and re-register tiles in `S.trk`.
 
 **Saves**
-- `localStorage` keys: `coastr.save.career` (the first scenario), `coastr.save.<scenario>`,
-  `coastr.save.sandbox`, `coastr.settings`, `coastr.progress`, `coastr.designs`.
+- Every key starting with `coastr.save.` is one saved park; the main menu lists them all ("Your
+  parks", at most `MAX_PARKS` = 8, newest first by the save's `at` time). New parks get
+  `coastr.save.p<random>`. Older versions kept one park per scenario under `coastr.save.career`,
+  `coastr.save.<scenario>` and `coastr.save.sandbox`; those keys are simply parks in the list, so
+  nothing is migrated. The park being played is `curKey` in `main.js`; `progress.last.key` is the
+  one "Continue" opens. A save that fails to load starts a new park in a new slot and is left alone.
+- Other keys: `coastr.settings`, `coastr.progress`, `coastr.designs`.
+- `S.name` is the player's name for the park ('' means "use the scenario's name", so it follows the
+  language).
 - Save format is `v: 2` with `n` (map size), `sc` (scenario) and `rle: 1` (map layers stored as
   run-length pairs). Saves without `n` are from the 40x40 map and are shifted to the front centre
   of the current map in `deserialize`; saves without `rle` have one character per tile; saves
@@ -178,9 +188,25 @@ TOKI_KEY="$TOKI_KEY" node /tmp/toki-upload.mjs .
   camera leaves it, the zoom settles, or `S.tv` / `S.pv` change. Only tiles marked in `occl` (higher
   than ground just behind them) are drawn again in order, so they can still hide things. Anything
   in `drawTile` that moves must cope with `time < 0`, which means "for the kept picture".
+  While the camera moves, the next picture is started early, centred further along, and drawn eight
+  rows of tiles per frame (`startGround` / `stepGround`, each slice made to paint at once by `settle`)
+  so it is ready before it is needed; a change to the park still redraws it in one go.
   `look.ground = false` switches the picture off for comparing. `look.q` (0 to 3) lowers the
   drawing resolution and drops small details; `tuneQuality` in `main.js` sets it from measured
-  frame times unless `look.auto` is false. Set `look.auto = false` in tests that compare pictures.
+  frame times unless `look.auto` is false (down when about one frame in four is late, up again only
+  after a long smooth spell, waiting longer after each try that failed). Set `look.auto = false` in tests that compare pictures.
+- The world is placed on whole device pixels (`px` in `render.js`: device = world * `px.a` + `px.e`).
+  Ready-made pictures made at exactly that scale are copied pixel for pixel (`blit`); a copy that is
+  off by a fraction of a pixel or scaled is several times slower (measured: slower than drawing a
+  tree's shapes). Pictures made this way: still scenery (`stampScenery`, lamps lit and unlit), guests
+  (`guestPics`, per look and a few poses), and every part of every coaster track (`paintPart` in
+  `track.js`, a few per frame, within `PIC_BUDGET` pixels, freed when long off screen). They are
+  made again when the zoom settles; while zooming the old ones are stretched. Close up (scale above 3)
+  everything is drawn as shapes. `look.pics = false` switches the track and guest pictures off.
+- Track paths are `BPath` (a `Path2D` that records its bounds) so a part knows its picture's size.
+  Anything that changes how a piece looks must clear `piece.geo` (colour changes already do).
+- Rides and stalls are still drawn as shapes every frame because they move; they are now the
+  largest part of a frame.
 - Tried and dropped: keeping each ride as its own picture refreshed every few frames. Uploading the
   changed pictures cost more than drawing the rides.
 - `cover.png` and `shots/*.png` were captured from the running game at 1280x720.
