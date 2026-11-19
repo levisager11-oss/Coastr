@@ -166,6 +166,11 @@ Durable Object per room, at `wss://coastr-rooms.levisager.workers.dev` (`RELAY` 
 - In the builder, `ui.cands` holds the choices shown as round buttons on the map; `builderAct` is
   the one place every builder action goes through (buttons, map buttons and keys). `ui.pick` is the
   piece tapped for changing; `alterPiece` and `cutAfter` (`coaster.js`) do the work.
+- A car's direction is blended between the track samples on either side (`dirAt` in `coaster.js`,
+  used by `posAt`), so trains turn smoothly rather than in steps.
+- The builder shows the track from the side (`drawGraph` in `ui.js`): height over distance above the
+  ground, coloured by speed, with the lift, rough spots and a stall marked. It is drawn again only when
+  `c.sim` changes, and hidden on screens under 600 px tall.
 - Several trains: `c.trains` (1 to `maxTrains(c)`), each train out on the track is an entry
   `{ t, riders }` in `c.runs` (`updateTrains` in `sim.js`). `c.riders` is everyone on all of them.
   `c.runs` is not saved.

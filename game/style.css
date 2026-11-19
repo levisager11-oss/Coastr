@@ -139,6 +139,7 @@ svg { display: block; }
 #builder .b-status { font-size: 12.5px; padding: 0 2px 6px; font-weight: 700; color: var(--soft); min-height: 1.3em; }
 #builder .b-status.bad { color: #d63a5f; }
 #builder .b-status.good { color: #05805f; }
+#builder .b-graph { display: block; width: 100%; height: 44px; margin: -2px 0 6px; background: #f6f8fb; border-radius: 10px; }
 #builder .b-pick { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; background: #fff6cf; border-radius: 12px; padding: 4px 4px 4px 10px; margin-bottom: 6px; }
 #builder .b-pick b { font-size: 12.5px; margin-right: auto; }
 #builder .b-pick button { height: 36px; border-radius: 10px; display: flex; align-items: center; gap: 4px; padding: 0 9px; font-size: 11.5px; background: #fff; box-shadow: 0 1px 0 rgba(43, 45, 66, 0.12); }
@@ -382,9 +383,6 @@ table.fin .pos { color: #05805f; }
   #b-open { padding: 0 8px; }
   #tools button span { font-size: 9.5px; }
 }
-@media (max-width: 350px) {
-  #b-goals { display: none; }
-}
 /* small boxes: narrow and short, like a game shown inside a page on a phone before going fullscreen */
 @media (max-height: 480px) and (max-width: 560px) {
   .pill, .btn { min-height: 30px; }
@@ -546,4 +544,19 @@ table.fin .pos { color: #05805f; }
 }
 @media (max-height: 480px) and (max-width: 560px) {
   .mp-code b { font-size: 22px; }
+}
+
+/* the narrowest phones (320 px): a little tighter, so the goals flag still fits in the second row.
+   Last in the file, so it also applies inside the small box. */
+@media (max-width: 350px) {
+  #top, .embedded #top { column-gap: 3px; }
+  .btn.icon { width: 30px; }
+  #speed { padding: 2px; gap: 1px; }
+  #speed button { min-width: 25px; padding: 0 3px; }
+  #b-open { padding: 0 7px; }
+}
+
+/* the side view of the track needs room: on short screens the map comes first */
+@media (max-height: 600px) {
+  #builder .b-graph { display: none; }
 }

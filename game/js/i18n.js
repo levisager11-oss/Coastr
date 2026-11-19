@@ -84,7 +84,7 @@ const en = {
   b_right: 'Right', b_chain: 'Lift', b_bank: 'Banked', b_loop: 'Loop', b_boost: 'Booster', b_brake: 'Brakes', b_undo: 'Undo',
   b_auto: 'Finish for me', b_test: 'Test ride', b_done: 'Done', b_pieces: '{0} pieces', b_endspeed: 'Speed here: {0} km/h',
   b_complete: 'Track complete!', b_station: 'Choose where the station goes.', b_rotate: 'Turn', b_place: 'Build', b_cancel: 'Cancel',
-  b_open_q: 'Open it for guests now?', b_height: 'Height {0} m',
+  b_open_q: 'Open it for guests now?', b_height: 'Height {0} m', b_graph: 'Height and speed along the track',
   speed_now: 'Speed', test_title: 'Test ride finished', kmh: '{0} km/h', meters: '{0} m', secs: '{0} s', gforce: '{0} G',
 
   // scenarios
@@ -285,7 +285,7 @@ const de = {
   b_right: 'Rechts', b_chain: 'Lift', b_bank: 'Steilkurve', b_loop: 'Looping', b_boost: 'Booster', b_brake: 'Bremse', b_undo: 'Zurück',
   b_auto: 'Fertig bauen', b_test: 'Testfahrt', b_done: 'Fertig', b_pieces: '{0} Teile', b_endspeed: 'Tempo hier: {0} km/h',
   b_complete: 'Strecke fertig!', b_station: 'Such einen Platz für die Station.', b_rotate: 'Drehen', b_place: 'Bauen', b_cancel: 'Abbrechen',
-  b_open_q: 'Jetzt für Gäste öffnen?', b_height: 'Höhe {0} m',
+  b_open_q: 'Jetzt für Gäste öffnen?', b_height: 'Höhe {0} m', b_graph: 'Höhe und Tempo entlang der Strecke',
   speed_now: 'Tempo', test_title: 'Testfahrt beendet', kmh: '{0} km/h', meters: '{0} m', secs: '{0} s', gforce: '{0} G',
 
   // scenarios

@@ -615,7 +615,7 @@ export function recompute(c) {
   }
   gv.set(sg); gl.set(sl);
   const sim = {
-    ok: stall < 0, stall, n, segs: used, X, Y, Z, PI, U, s, t: tt, v: vv, gv, gl,
+    ok: stall < 0, stall, n, segs: used, closed: !!c.closed, X, Y, Z, PI, U, s, t: tt, v: vv, gv, gl,
     L: s[used], T: tt[used], maxV, maxGv, minGv, maxGl, air, bigDrop, nDrops, maxH, endV: v,
   };
   c.sim = sim;
@@ -659,6 +659,18 @@ function rate(c, sim) {
   sim.maxLat = sim.maxGl;
 }
 
+const DA = [0, 0, 0], DB = [0, 0, 0];
+/** Direction of the track at sample k, from the samples either side: a unit vector in metres, given back in tiles and levels. */
+function dirAt(sim, k, out) {
+  const n = sim.n;
+  let p = k - 1, q = k + 1;
+  if (sim.closed) { p = (p + n) % n; q %= n; } else { p = Math.max(0, p); q = Math.min(n - 1, q); }
+  const a = Math.min(k, n - 1) % n;
+  if (p === q) { p = a; q = Math.min(n - 1, a + 1); }
+  const dx = (sim.X[q] - sim.X[p]) * TILE_M, dy = (sim.Y[q] - sim.Y[p]) * TILE_M, dz = (sim.Z[q] - sim.Z[p]) * UNIT_M;
+  const l = Math.hypot(dx, dy, dz) || 1;
+  out[0] = dx / l / TILE_M; out[1] = dy / l / TILE_M; out[2] = dz / l / UNIT_M;
+}
 /** Position on the track at distance s (metres) from the station start. */
 export function posAt(sim, dist, out) {
   const L = sim.L;
@@ -670,7 +682,9 @@ export function posAt(sim, dist, out) {
   const a = lo % sim.n, b = (lo + 1) % sim.n;
   const f = (d - sim.s[lo]) / Math.max(0.0001, sim.s[lo + 1] - sim.s[lo]);
   out.x = lerp(sim.X[a], sim.X[b], f); out.y = lerp(sim.Y[a], sim.Y[b], f); out.z = lerp(sim.Z[a], sim.Z[b], f);
-  out.tx = sim.X[b] - sim.X[a]; out.ty = sim.Y[b] - sim.Y[a]; out.tz = sim.Z[b] - sim.Z[a];
+  // the direction blends from one sample to the next, so a car turns smoothly instead of in steps
+  dirAt(sim, lo, DA); dirAt(sim, lo + 1, DB);
+  out.tx = lerp(DA[0], DB[0], f); out.ty = lerp(DA[1], DB[1], f); out.tz = lerp(DA[2], DB[2], f);
   out.k = lo; out.pi = sim.PI[a];
   const ub = sim.PI[b] === sim.PI[a] ? sim.U[b] : 1;
   out.u = lerp(sim.U[a], ub, f);

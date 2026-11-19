@@ -561,6 +561,7 @@ function buildBuilder() {
   els.builder.innerHTML = `
     <div class="b-head"><b>${esc(objName(c))}</b><span data-k="info"></span></div>
     <div class="b-status" data-k="status"></div>
+    <canvas class="b-graph" data-k="graph" role="img" aria-label="${esc(t('b_graph'))}" title="${esc(t('b_graph'))}"></canvas>
     <div class="b-pick" hidden><b data-k="pickname"></b>${btn('p-chain', 'b_chain', 'chain')}${btn('p-bank', 'b_bank', 'bank')}${btn('p-s', 'b_plain', 'slope_f')}${btn('p-brake', 'b_brake', 'brake')}${btn('p-boost', 'b_boost', 'boost')}${btn('p-cut', 'b_cut', 'cut')}${btn('p-x', 'close', 'close')}</div>
     <div class="b-rows">
       <div class="grp g-slope">${slopes}</div>
@@ -633,6 +634,7 @@ function refreshBuilder() {
   if (c.closed && sim.ok && c.I <= 9 && ui.pick === null) txt += ' ' + t('b_pickhint');
   if (st.textContent !== txt) st.textContent = txt;
   if (st.className !== cls) st.className = cls;
+  drawGraph(c, q('graph'));
   // the piece that was tapped on the map, and what can be done to it
   if (ui.pick !== null && !c.pieces[ui.pick]) ui.pick = null;
   const al = ui.pick !== null ? alterable(c, ui.pick) : null, pk = els.builder.querySelector('.b-pick');
@@ -660,6 +662,91 @@ function refreshBuilder() {
     if (a === 'undo') b.disabled = c.pieces.length <= 3 || c.st === 'test';
   }
   updateCands();
+}
+// The track seen from the side, stretched out straight: its height over the distance travelled, above
+// the ground under it. The line goes from blue to red with the speed; the lift is drawn with a chain, rough
+// spots get red dots, and the place where a train would stop a dot with "!". Drawn again only when the
+// track changes or the bar changes size.
+let graphKey = null, graphCv = null;
+function drawGraph(c, cv) {
+  if (!cv) return;
+  const W = cv.clientWidth, H = cv.clientHeight, sim = c.sim;
+  if (!W || !H || !sim) return;
+  const dpr = Math.min(3, window.devicePixelRatio || 1), key = sim;
+  if (graphKey === key && graphCv === cv && cv.width === Math.round(W * dpr)) return;
+  graphKey = key; graphCv = cv;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  const n = sim.n, base = c.pieces[0].h0, used = sim.ok ? (c.closed ? n : n - 1) : sim.segs;
+  if (n < 2) return;
+  // distance along the track (metres) at every point, also past a point where the train would stop
+  const D = new Float32Array(n + 1);
+  for (let k = 1; k <= n; k++) {
+    const a = k - 1, b = k % n;
+    if (k === n && !c.closed) { D[k] = D[k - 1]; break; }
+    D[k] = D[k - 1] + Math.hypot((sim.X[b] - sim.X[a]) * 4, (sim.Y[b] - sim.Y[a]) * 4, (sim.Z[b] - sim.Z[a]) * 2);
+  }
+  const last = c.closed ? n : n - 1, L = D[last] || 1;
+  let zMin = 0, zMax = 4, high = 0;
+  const ground = new Float32Array(last + 1);
+  for (let k = 0; k <= last; k++) {
+    const q = k % n, i = idx(Math.max(0, Math.min(N - 1, Math.floor(sim.X[q]))), Math.max(0, Math.min(N - 1, Math.floor(sim.Y[q]))));
+    ground[k] = S.h[i] - (S.water[i] ? 0.3 : 0) - base;
+    high = Math.max(high, sim.Z[q] - base); zMin = Math.min(zMin, ground[k]);
+  }
+  zMax = Math.max(zMax, high);
+  const top = 13, bot = 3, X = (d) => 2 + (d / L) * (W - 4), Y = (z) => top + (1 - (z - zMin) / (zMax - zMin)) * (H - top - bot);
+  // the ground under the track
+  g.fillStyle = '#e3e8f0';
+  g.beginPath(); g.moveTo(X(0), H);
+  for (let k = 0; k <= last; k++) g.lineTo(X(D[k]), Y(ground[k]));
+  g.lineTo(X(L), H); g.closePath(); g.fill();
+  // the station's level
+  g.strokeStyle = 'rgba(43,45,66,0.18)'; g.lineWidth = 1; g.setLineDash([3, 3]);
+  g.beginPath(); g.moveTo(0, Y(0) + 0.5); g.lineTo(W, Y(0) + 0.5); g.stroke(); g.setLineDash([]);
+  // the track, coloured by speed
+  const maxV = Math.max(15, sim.maxV || 0);
+  const col = (v) => (v < 0.5 ? mixHex('#3b8ed0', '#ffd23f', v * 2) : mixHex('#ffd23f', '#ef476f', (v - 0.5) * 2));
+  g.lineWidth = 2.6; g.lineCap = 'round';
+  for (let k = 0; k < last; k++) {
+    const a = k % n, b = (k + 1) % n, p = c.pieces[sim.PI[a]];
+    g.strokeStyle = k >= used ? '#b7bfcc' : col(Math.min(1, (sim.v[k] || 0) / maxV));
+    g.beginPath(); g.moveTo(X(D[k]), Y(sim.Z[a] - base)); g.lineTo(X(D[k + 1]), Y(sim.Z[b] - base)); g.stroke();
+    if (p && p.chain) {
+      // a lift: little chain links along it
+      g.strokeStyle = 'rgba(43,45,66,0.55)'; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(X(D[k]), Y(sim.Z[a] - base) + 3); g.lineTo(X(D[k + 1]), Y(sim.Z[b] - base) + 3); g.stroke();
+      g.lineWidth = 2.6;
+    }
+  }
+  // rough spots (as on the map) and where a train would stop
+  const dot = (k, r) => {
+    const q = k % n, x = X(D[k]), y = Y(sim.Z[q] - base);
+    g.fillStyle = '#ff2d45'; g.strokeStyle = '#fff'; g.lineWidth = 1.5;
+    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill(); g.stroke();
+  };
+  if (c.closed && sim.ok && c.I > 8) {
+    const lim = Math.max(1.1, sim.maxGl * 0.7);
+    let lastX = -99;
+    for (let k = 2; k <= sim.segs; k++) if ((sim.gl[k] > lim || sim.gv[k] > 4.4) && X(D[Math.min(k, last)]) - lastX > 10) { dot(Math.min(k, last), 3.2); lastX = X(D[Math.min(k, last)]); }
+  }
+  if (!sim.ok) {
+    const k = Math.min(sim.segs, last);
+    dot(k, 5);
+    g.fillStyle = '#fff'; g.font = '900 8px ui-rounded, system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('!', X(D[k]), Y(sim.Z[k % n] - base) + 0.5);
+  }
+  // the highest point and the top speed
+  g.font = '700 10px ui-rounded, system-ui, sans-serif'; g.textBaseline = 'top'; g.fillStyle = '#6b7088';
+  g.textAlign = 'left'; g.fillText('↕ ' + t('meters', num(Math.round(high * 2))), 3, 1);
+  if (sim.maxV > 0) { g.textAlign = 'right'; g.fillText(t('kmh', num(sim.maxV * 3.6)), W - 3, 1); }
+}
+function mixHex(a, b, k) {
+  const p = parseInt(a.slice(1), 16), q = parseInt(b.slice(1), 16);
+  const m = (s) => Math.round(((p >> s) & 255) * (1 - k) + ((q >> s) & 255) * k);
+  return `rgb(${m(16)},${m(8)},${m(0)})`;
 }
 function focusEnd(c) {
   const e = endState(c);
