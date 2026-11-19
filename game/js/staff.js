@@ -55,7 +55,8 @@ export function syncCrew() {
 }
 function release(m) {
   if (!m) return;
-  const o = S.objs[m.job];
+  if (m.crew === 'clean') claimed.delete(m.job);
+  const o = m.crew === 'mech' ? S.objs[m.job] : null;
   if (o && o.fixer === m.id) o.fixer = 0;
   m.job = 0; m.route = null;
 }

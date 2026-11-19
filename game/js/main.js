@@ -464,7 +464,9 @@ function startGame(mode, fresh, sc = 'meadows', key = null, data = null) {
   curKey = key; saveWarned = false;
   initAfterLoad();
   S.speed = 1;
-  events.length = 0;
+  // (nothing that happened while loading is announced, except that staff were hired for an older park)
+  const hired = events.filter((e) => e.type === 'staffnew');
+  events.length = 0; events.push(...hired);
   clearFx();
   playing = true;
   menuEl.hidden = true; hudEl.hidden = false;

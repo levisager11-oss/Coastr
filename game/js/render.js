@@ -307,7 +307,6 @@ function drawLitter(ctx, x, y, i, l) {
     else if (k % 3 === 1) ctx.fillRect(px0 - 1.3, py0 - 2.6, 2.6, 3.2);
     else { ctx.beginPath(); ctx.ellipse(px0, py0, 2.4, 1.3, 0.5, 0, 6.3); ctx.fill(); }
   }
-  ctx.strokeStyle = 'rgba(40,28,64,0.3)'; ctx.lineWidth = 0.6;
 }
 // A spanner on the badge of a ride that has broken down.
 function spanner(ctx, x, y, s) {
