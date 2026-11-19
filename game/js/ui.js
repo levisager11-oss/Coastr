@@ -1393,6 +1393,11 @@ export function handleEvents() {
       const o = S.objs[e.id];
       if (o && e.sum > 0 && cam.zoom >= 0.5) { const [x, y] = objCenter(o); floatText(x, y - 30, '+' + money(Math.round(e.sum))); }
       if (o && ui.follow === e.id) sfx('whoosh');
+      else if (o && o.kind === 'coaster' && kindOf(o) === 'train' && audio.sfx) {
+        // the engine whistles as it sets off, if it is on screen
+        const [x, y] = objCenter(o), px = (x - cam.x) * cam.zoom + view.w / 2, py = (y - cam.y) * cam.zoom + view.h / 2;
+        if (px > 0 && py > 0 && px < view.w && py < view.h) sfx('toot', Math.max(0.3, Math.min(0.8, cam.zoom * 0.6)));
+      }
     } else if (e.type === 'fireworks') toast(t('fireworks'), 'good');
     else if (e.type === 'event') { toast(t('ev_' + e.id), 'good'); sfx('unlock'); }
     else if (e.type === 'eventend') toast(e.id === 'critic' || e.id === 'tv' ? t('evend_' + e.id + (e.good ? '_good' : '_bad'), money(e.prize)) : t('evend_' + e.id), e.good ? '' : 'bad');
@@ -1466,6 +1471,8 @@ export function updateSounds(dt) {
       if (falling && !r.scr && screamT <= 0 && (r.riders ? r.riders.length : 0) > 0) { sfx('scream', vol); screamT = 1.6; }
       r.scr = falling;
       if (v > 19 && !r.wsh) { sfx('rush', vol * 0.8); r.wsh = true; } else if (v < 13) r.wsh = false;
+      // a boat hits the water at the foot of a drop
+      if (kindOf(c) === 'flume') { const wet = v > 6.5 && p.h0 === p.h1 && !p.chain; if (wet && !r.spl) sfx('splash', vol); r.spl = wet || (r.spl && v > 4.5); }
     }
   }
   if (lift && clackT <= 0) { sfx('clack', lift); clackT = 0.15; }
