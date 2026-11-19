@@ -6,16 +6,14 @@
   "controls": "Mouse: drag to move the map, scroll to zoom, click to build, drag to build a line of path or a whole area. Touch: drag to move, pinch to zoom, tap to build, then drag from the white dot to draw a line. Coasters: tap the arrows on the map, or use the arrow keys; tap a piece of track to change it. R turns a ride, Ctrl+Z takes back the last thing built, Esc cancels, Space pauses.",
   "category": "strategy",
   "engine": "HTML5 Canvas (plain JavaScript)",
-  "version": "2.1",
-  "update_title": "Save slots and a much smoother park",
+  "version": "2.2",
+  "update_title": "Play together with friends",
   "notes": [
-    "Keep up to eight parks at once: open Your parks on the main menu to see them all with a little map, the date, guests and money",
-    "Give your parks names, copy a park to try something risky, or delete one you no longer need. Your old parks are all still there",
-    "Starting a park again no longer replaces your saved one: it goes into a new slot",
-    "The game runs about twice as smoothly in a busy park, and dragging the map no longer stutters",
-    "Coaster supports no longer stand in the middle of paths or scenery: the track spans over them",
-    "Fixes for small screens: tips and messages no longer cover the build menu, the coaster arrows fit on the map, and long texts are no longer cut off",
-    "The guest window shows how many rides a guest has taken again"
+    "Build one park together with up to three friends: tap the gear, then Play together, and share the four-letter room code",
+    "Friends join from the main menu with Join a friend, or straight from Toki's Invite friends",
+    "You see every player's name on the map where they are building, and who is in the park at the top",
+    "Works in the sandbox and in all four scenarios: goals, stars and achievements count for everyone in the park",
+    "When the park closes, every player keeps a copy in Your parks to carry on alone or share again later"
   ],
   "cover_image": "cover.png",
   "screenshots": [
@@ -25,6 +23,8 @@
   ],
   "score_order": "high",
   "score_format": "points",
+  "multiplayer": true,
+  "max_players": 4,
   "folder": "game",
   "entry": "index.html",
   "boards": [

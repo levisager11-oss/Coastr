@@ -1,7 +1,7 @@
 // Coaster tracks: pieces, geometry, physics and ratings.
 import { N, DX, DY, COASTERS, SCENERY } from './data.js';
 import {
-  S, idx, inB, canAfford, spend, earn, registerPiece, unregisterPiece, nameFor, emit, pieceCells, pieceTiles, walkH, removeObj,
+  S, idx, inB, canAfford, spend, earn, registerPiece, unregisterPiece, nameFor, emit, pieceCells, pieceTiles, walkH, removeObj, newId,
 } from './world.js';
 
 const OK = { ok: true };
@@ -132,7 +132,7 @@ export function startCoaster(ctype, x, y, d) {
   const r = canStartCoaster(ctype, x, y, d);
   if (!r.ok) return r;
   const c = {
-    id: S.nextId++, kind: 'coaster', ctype, num: nameFor(ctype), pieces: [], closed: false, open: false,
+    id: newId(), kind: 'coaster', ctype, num: nameFor(ctype), pieces: [], closed: false, open: false,
     price: 5, queue: [], riders: [], st: 'idle', timer: 0, cost: 0, customers: 0, income: 0,
     x, y, E: 0, I: 0, Q: 0, runT: 0, born: S.time,
   };

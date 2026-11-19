@@ -1,6 +1,6 @@
 // Guests: walking, needs, choosing rides, buying things, thoughts.
 import { N, DX, DY, RIDES, STALLS, SCN } from './data.js';
-import { S, idx, inB, accessTiles, earn, walkH } from './world.js';
+import { S, idx, inB, accessTiles, earn, walkH, net } from './world.js';
 
 const FIRST = ['Mia', 'Noah', 'Emma', 'Leon', 'Lina', 'Finn', 'Sofia', 'Luca', 'Hanna', 'Ben', 'Lea', 'Elias', 'Nora',
   'Jonas', 'Ella', 'Paul', 'Maya', 'Tim', 'Zoe', 'Max', 'Ida', 'Liam', 'Anna', 'Felix', 'Clara', 'Omar', 'Yuki', 'Ravi',
@@ -264,7 +264,7 @@ function arrive(g) {
       think(g, 'th_expensive', o.id); g.happy -= 3; g.cool = 8;
       return;
     }
-    g.cash -= o.price; earn(o.price, 'stalls'); o.customers++; o.income += o.price;
+    g.cash -= o.price; if (!net.quiet) { earn(o.price, 'stalls'); o.customers++; o.income += o.price; }
     if (t.need === 'hunger') { g.hunger = Math.max(0, g.hunger - 75); g.thirst += 8; g.toilet += 8; g.happy += 5; think(g, 'th_yum'); }
     else if (t.need === 'thirst') {
       g.thirst = Math.max(0, g.thirst - 80); g.toilet += 22; g.happy += 3;

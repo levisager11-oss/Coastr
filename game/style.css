@@ -524,3 +524,26 @@ table.fin .pos { color: #05805f; }
   #st-date { display: none; }
   .dialog { --dp: 12px; }
 }
+
+/* ---------- playing together ---------- */
+#st-room { gap: 0; padding: 0 9px 0 10px; }
+#st-room i { width: 11px; height: 11px; border-radius: 50%; box-shadow: 0 0 0 2px #fff; display: block; flex: none; }
+#st-room i + i { margin-left: -3px; }
+#st-room b { margin-left: 6px; }
+.mp-code { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #f3f5fa; border-radius: 12px; padding: 6px 12px; }
+.mp-code span { color: var(--soft); font-weight: 700; min-width: 0; }
+.mp-code b { font-size: 28px; letter-spacing: 0.14em; font-weight: 900; font-variant-numeric: tabular-nums; -webkit-user-select: text; user-select: text; }
+.mp-list li { align-items: center; }
+.mp-list .nm2 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-list .cnt { margin-left: 0; }
+.btn.ic { gap: 6px; }
+.btn.ic svg { width: 17px; height: 17px; flex: none; }
+.dialog .name-in.code-in { text-align: center; font-size: 24px; letter-spacing: 0.25em; text-transform: uppercase; }
+@media (max-width: 560px) {
+  #st-room { order: 4; }
+  /* in a room the first row shows who is there instead of the date, so it stays short */
+  #hud.in-room #st-date { display: none; }
+}
+@media (max-height: 480px) and (max-width: 560px) {
+  .mp-code b { font-size: 22px; }
+}

@@ -8,6 +8,7 @@ import * as SP from './sprites.js';
 import { drawFxWorld, drawFxGlow, drawFxScreen, fxWet, fxSnow } from './fx.js';
 import { drawPiece, drawCar, stationRoof, setTrackDetail, coasterThumb, trackPictures } from './track.js';
 import { isoX, isoY, heff, shade, mix, rectPath } from './iso.js';
+import { room, COLORS, playerName } from './net.js';
 
 export { isoX, isoY, shade, drawPiece, coasterThumb };
 
@@ -996,6 +997,18 @@ function drawOverlays(ctx, time, ui) {
       const cx = g.kind === 'box' ? g.x + g.w / 2 : g.x + 0.5 + DX[g.d], cy = g.kind === 'box' ? g.y + g.h / 2 : g.y + 0.5 + DY[g.d];
       pill(ctx, g.note, isoX(cx, cy), isoY(cx, cy, S.h[idx(g.x, g.y)]) + 34 * s, '#b97800', s);
     }
+  }
+  // where the other players in a shared park are pointing: a tile in their colour and a flag with their name
+  for (const [slot, c] of room.cursors) {
+    if (!inB(c.x, c.y)) continue;
+    const z = heff(idx(c.x, c.y)) + 0.04, col = COLORS[slot] || '#fff', name = playerName(slot);
+    if (!name) continue;
+    outline(ctx, c.x, c.y, 1, 1, z, col + '40', col);
+    const cx = isoX(c.x + 0.5, c.y + 0.5), cy = isoY(c.x + 0.5, c.y + 0.5, z);
+    ctx.strokeStyle = col; ctx.lineWidth = 2 * s;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - 20 * s); ctx.stroke();
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(cx, cy, 3 * s, 0, 6.3); ctx.fill();
+    pill(ctx, name, cx, cy - 29 * s, col, s);
   }
   // the tile you can drag from to draw a line or an area
   if (ui.handle && inB(ui.handle.x, ui.handle.y)) {

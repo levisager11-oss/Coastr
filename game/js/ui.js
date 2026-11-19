@@ -6,7 +6,7 @@ import {
 import {
   S, idx, inB, events, canPath, placePath, removePath, canPlaceBox, placeRide, placeStall, footprint, canScenery,
   placeScenery, removeScenery, canTerrain, terrain, canWater, setWater, whatAt, removeObj, objValue, accessTiles,
-  parkValue, canAfford, spend, earn, snapshot, restore, pathCost,
+  parkValue, canAfford, spend, earn, snapshot, restore, pathCost, net,
 } from './world.js';
 import {
   canStartCoaster, startCoaster, addPiece, undoPiece, autoFinish, endState, previewPiece, posAt, trainDist, alterable, alterPiece, cutAfter,
@@ -20,6 +20,7 @@ import { t, money, num, lang } from './i18n.js';
 import { sfx, unlock, audio } from './audio.js';
 import { icon } from './icons.js';
 import { burst, floatText, confetti, fxHooks } from './fx.js';
+import { room, COLORS, MAX_PLAYERS, setCursor } from './net.js';
 
 export const ui = {
   tool: 'inspect', item: null, rot: 0, ghost: null, sel: null, editing: 0, follow: 0, followPos: null,
@@ -69,6 +70,13 @@ export function dialog(html, buttons) {
       resolve(b ? buttons[+b.dataset.i].value : null);
     };
   });
+}
+/** Close the open dialog from code; its promise resolves to `value`. */
+export function closeDialog(value = 'auto') {
+  if (!modalResolve) return;
+  const r = modalResolve;
+  modalResolve = null; els.modal.hidden = true;
+  r(value);
 }
 export function showHelp() {
   const items = t('help').map(([a, b]) => `<dt>${esc(a)}</dt><dd>${esc(b)}</dd>`).join('');
@@ -829,7 +837,19 @@ function panelHTML() {
       <div class="row"><span>${esc(t('s_night'))}</span><button class="switch" data-act="night" data-k="night"></button></div>
       <div class="row"><span>${esc(t('s_lang'))}</span><button class="switch on" data-act="lang">${esc(t('lang_name'))}</button></div>
       <div class="btns"><button class="btn flat" data-act="help">${esc(t('m_help'))}</button><button class="btn flat" data-act="save">${esc(t('s_save'))}</button></div>
+      <div class="btns"><button class="btn blue ic" data-act="together">${icon('people')}<span data-k="together"></span></button></div>
       <div class="btns"><button class="btn yellow" data-act="tomenu">${esc(t('s_menu'))}</button></div></div>`;
+  }
+  if (p.type === 'room') {
+    if (!room.code) return null;
+    const host = myself() === 0;
+    return head(t('mp_title')) + `<div class="p-body">
+      <div class="mp-code"><span>${esc(t('mp_code'))}</span><b data-k="code"></b></div>
+      <div class="hint">${esc(t(host ? 'mp_code_hint' : 'mp_code_hint_guest'))}</div>
+      <h3>${esc(t('mp_players'))} <span data-k="count"></span></h3>
+      <ul class="list mp-list" data-k="players"></ul>
+      <div class="btns"><button class="btn flat ic" data-act="mpname">${icon('pen')}${esc(t('mp_rename'))}</button></div>
+      <div class="btns"><button class="btn red" data-act="mpleave">${esc(t(host ? 'mp_close' : 'mp_leave'))}</button></div></div>`;
   }
   return null;
 }
@@ -940,7 +960,14 @@ function panelValues() {
     const html = {};
     for (const id in S.objs) if (S.objs[id].kind !== 'stall') html['q' + id] = 1;
     return { v, w, show, html, dots: 1 };
+  } else if (p.type === 'room') {
+    v.code = room.code;
+    v.count = room.players.length + ' / ' + MAX_PLAYERS;
+    v.players = room.players.map((q) => `<li><span class="dot" style="background:${COLORS[q.slot]}"></span><span class="nm2">${esc(q.name)}</span>`
+      + `${q.slot === 0 ? `<span class="cnt">${esc(t('mp_host'))}</span>` : ''}${q.slot === myself() ? `<span class="cnt">${esc(t('mp_you'))}</span>` : ''}</li>`).join('');
+    return { v, w, show, html: { players: 1 } };
   } else if (p.type === 'settings') {
+    v.together = t(room.code ? 'mp_room_n' : 'mp_title', room.code);
     v.pname = S.name || t('sc_' + S.sc);
     v.music = t(audio.music ? 'on' : 'off'); v.sfx = t(audio.sfx ? 'on' : 'off'); v.night = t(look.night ? 'on' : 'off');
     return { v, w, show, cls: { music: audio.music, sfx: audio.sfx, night: look.night } };
@@ -953,6 +980,7 @@ function panelSig() {
   if (p.type === 'goals') return [S.goal, S.goalsDone, S.stars, lang].join();
   if (p.type === 'research') return [researchNext() < 0, lang].join();
   if (p.type === 'park') return Object.keys(S.objs).join() + lang;
+  if (p.type === 'room') return room.code + lang;
   return lang;
 }
 export function refreshPanel() {
@@ -1054,7 +1082,11 @@ function onPanel(e) {
     if (a === 'park') { openPanel('park'); return; }
   } else if (panel.type === 'research') {
     if (a.startsWith('rl')) S.research.level = +a.slice(2);
+  } else if (panel.type === 'room') {
+    if (a === 'mpname') { ui.hooks.renameMe(); return; }
+    if (a === 'mpleave') { ui.hooks.leave(); return; }
   } else if (panel.type === 'settings') {
+    if (a === 'together') { ui.hooks.together(); return; }
     if (a === 'music' || a === 'sfx' || a === 'lang' || a === 'save' || a === 'tomenu' || a === 'night' || a === 'rename') ui.hooks[a]();
     else if (a === 'help') showHelp();
   }
@@ -1071,6 +1103,7 @@ export function buildHUD() {
   $('st-cash').innerHTML = icon('coin') + '<b></b>'; $('st-cash').title = t('finances');
   $('st-guests').innerHTML = icon('guest') + '<b></b>'; $('st-guests').title = t('guests');
   $('st-rating').innerHTML = icon('star') + '<b></b>'; $('st-rating').title = t('park_map');
+  roomSig = ''; refreshRoom();
   els.undo.innerHTML = icon('undo') + `<span>${esc(t('b_undo'))}</span>`;
   wxKey = '';
   buildTools(); traySig = ''; buildTray(true);
@@ -1079,7 +1112,23 @@ export function buildHUD() {
   lastTut = -1;
   refreshHUD();
 }
-let lastTut = -1, wxKey = '';
+let lastTut = -1, wxKey = '', roomSig = '';
+const myself = () => (room.code ? net.slot : -1);
+/** The little row of players in the top bar, and the room panel if it is open. Call when someone comes or goes. */
+export function refreshRoom() {
+  const el = $('st-room');
+  if (!el) return;
+  const sig = room.code + room.players.map((q) => q.slot + q.name).join() + lang;
+  if (sig !== roomSig) {
+    roomSig = sig;
+    el.hidden = !room.code;
+    els.hud.classList.toggle('in-room', !!room.code);
+    el.innerHTML = room.players.map((q) => `<i style="background:${COLORS[q.slot]}"></i>`).join('') + `<b>${room.players.length}</b>`;
+    el.title = room.players.map((q) => q.name).join(', ');
+    el.setAttribute('aria-label', t('mp_players') + ': ' + el.title);
+  }
+  if (panel && (panel.type === 'room' || panel.type === 'settings')) { panel.sig = ''; refreshPanel(); }
+}
 export function refreshHUD() {
   const set = (id, txt) => { const b = $(id).querySelector('b'); if (b.textContent !== txt) b.textContent = txt; };
   set('st-cash', S.sandbox ? '∞' : money(Math.floor(S.cash)));
@@ -1144,6 +1193,7 @@ export function handleEvents() {
     else if (e.type === 'research') { toast(t('research_done', t(e.id)), 'good'); sfx('unlock'); traySig = ''; if (ui.editing) buildBuilder(); }
     else if (e.type === 'ach') { toast(t('ach', t('a')[e.id]), 'good'); ui.hooks.achievement(e.id); }
     else if (e.type === 'month') ui.hooks.month();
+    else if (e.type === 'removed') { if (ui.editing === e.id && !S.objs[e.id]) exitEditor(true); }
     else if (e.type === 'closed') { if (ui.editing === e.id) { toast(t('b_complete'), 'good'); sfx('goal'); confetti(view.w, view.h, 60); } }
     else if (e.type === 'built') {
       const o = S.objs[e.id];
@@ -1256,6 +1306,7 @@ function tap(px, py, touch) {
     return;
   }
   const tile = pickTile(px, py);
+  if (tile) setCursor(tile.x, tile.y);
   if (ui.tool === 'inspect') {
     const th = pickThing(px, py);
     if (!th) { closePanel(); return; }
@@ -1325,6 +1376,7 @@ function onMove(e) {
       }
       const tile = pickTile(e.clientX, e.clientY);
       lastHover = tile;
+      if (tile) setCursor(tile.x, tile.y);
       if (!ui.pending) ui.ghost = ghostAt(tile);
     }
     return;

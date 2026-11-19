@@ -2,7 +2,7 @@
 import {
   N, RIDES, STALLS, SCENERY, COASTERS, RESEARCH, RESEARCH_LEVELS, SCENARIOS, DAY_LEN, MONTH_DAYS, MAX_GUESTS, DAY_CYCLE,
 } from './data.js';
-import { S, idx, accessTiles, spend, earn, canAfford, parkValue, emit, countWater, objValue } from './world.js';
+import { S, idx, accessTiles, spend, earn, canAfford, parkValue, emit, countWater, objValue, net } from './world.js';
 import { field, makeGuest, updateGuest, unloadRider, rideUsable, rideStats, think, buzz } from './guests.js';
 import { recompute } from './coaster.js';
 
@@ -172,6 +172,11 @@ function updateRating(att) {
 }
 
 // ---------- rides ----------
+/** A guest pays for a ride. (On a guest's copy of a shared park the host's game does the counting.) */
+function fare(o) {
+  if (net.quiet) return;
+  earn(o.price, 'rides'); o.customers++; o.income += o.price;
+}
 function updateRide(o, dt) {
   const isC = o.kind === 'coaster';
   const st = isC ? null : RIDES[o.type];
@@ -209,7 +214,7 @@ function updateRide(o, dt) {
         const g = S.gmap.get(id);
         if (!g) continue;
         g.st = 'ride'; g.cash -= o.price;
-        earn(o.price, 'rides'); o.customers++; o.income += o.price;
+        fare(o);
       }
       o.st = 'run'; o.runT = 0;
       o.timer = isC ? o.sim.T : st.dur;
@@ -252,7 +257,7 @@ function updateTrains(o, dt, cap) {
         const g = S.gmap.get(id);
         if (!g) continue;
         g.st = 'ride'; g.cash -= o.price;
-        earn(o.price, 'rides'); o.customers++; o.income += o.price;
+        fare(o);
       }
       o.runs.push({ t: 0, riders });
       o.riders = o.runs.flatMap((r) => r.riders);
@@ -351,6 +356,9 @@ function everySecond() {
   const att = attraction();
   S.att = att;
   if (S.beautyPv !== S.pv) { S.beautyNow = beauty(); S.beautyPv = S.pv; S.waterNow = countWater(); }
+  // a guest's copy of a shared park: the host's game keeps the rating, goals and awards, and how
+  // many guests there are; this copy only brings in as many guests to walk about
+  if (net.mirror) { S.target = S.open ? net.hostGuests : 0; return; }
   updateRating(att);
   S.target = S.open ? guestTarget(att) : 0;
   if (S.guests.length > S.peakGuests) S.peakGuests = S.guests.length;
@@ -385,6 +393,7 @@ function newMonth() {
 }
 
 function spawn() {
+  if (net.mirror) { S.guests.push(makeGuest(S.ent.x, S.ent.y)); return; }
   const worth = feeWorth() * (0.8 + Math.random() * 0.5);
   if (S.fee > worth) { S.turnedAway++; return; }
   const g = makeGuest(S.ent.x, S.ent.y);
@@ -398,10 +407,11 @@ function spawn() {
 /** Advance the simulation by dt seconds of game time. */
 export function tick(dt) {
   if (!S.gmap) S.gmap = new Map();
+  net.quiet = net.mirror;
   const dayBefore = Math.floor(S.time / DAY_LEN);
   S.time += dt;
   const dayAfter = Math.floor(S.time / DAY_LEN);
-  for (let d = dayBefore; d < dayAfter; d++) newDay();
+  if (!net.mirror) for (let d = dayBefore; d < dayAfter; d++) newDay();
 
   S.gmap.clear();
   for (const g of S.guests) S.gmap.set(g.id, g);
@@ -412,11 +422,13 @@ export function tick(dt) {
 
   secAcc += dt;
   if (secAcc >= 1) { secAcc -= 1; if (secAcc > 1) secAcc = 0; everySecond(); }
-  updateWeather(dt); updateShow(dt); updateEvents(dt);
+  if (!net.mirror) { updateWeather(dt); updateEvents(dt); }
+  updateShow(dt);
   if (S.open && S.guests.length < (S.target || 0)) {
     spawnAcc += dt * Math.min(1.2, 0.15 + ((S.target || 0) - S.guests.length) / 25) * (isWet() ? 0.6 : 1);
     while (spawnAcc >= 1) { spawnAcc -= 1; spawn(); }
   }
+  net.quiet = false;
 }
 
 export function startTest(c) {

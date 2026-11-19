@@ -7,6 +7,18 @@ import {
 export const S = {}; // the one mutable game state; filled by newGame / loadGame
 export const events = []; // queued notifications for the UI: {type, ...}
 export const emit = (type, data = {}) => { events.push({ type, ...data }); };
+// Playing together (net.js): on = in a room, slot = this player's number (0 is the host),
+// mirror = a guest's copy of the park (the host's game does the money, goals and research),
+// quiet = the simulation is running on a mirror, so it must not earn or spend.
+export const net = { on: false, slot: 0, mirror: false, quiet: false, hostGuests: 0 };
+const SLOTS = 4;
+/** A new object id. In a room every player takes ids of their own (id % 4 = slot), so two players building at once never clash. */
+export function newId() {
+  let id = S.nextId;
+  if (net.on) { while (id % SLOTS !== net.slot || S.objs[id]) id++; }
+  S.nextId = id + 1;
+  return id;
+}
 
 export const idx = (x, y) => x + y * N;
 export const inB = (x, y) => x >= 0 && y >= 0 && x < N && y < N;
@@ -133,10 +145,12 @@ export function previewMap(sc) {
 // ---------- money ----------
 export function canAfford(n) { return S.sandbox || S.cash >= n; }
 export function spend(n, cat) {
+  if (net.quiet) return;
   if (!S.sandbox) S.cash -= n;
   S.fin.cur[cat] = (S.fin.cur[cat] || 0) - n;
 }
 export function earn(n, cat) {
+  if (net.quiet) return;
   if (!S.sandbox) S.cash += n;
   S.fin.cur[cat] = (S.fin.cur[cat] || 0) + n;
 }
@@ -259,7 +273,7 @@ export function placeRide(type, x, y, rot) {
   const r = canPlaceBox(f.x, f.y, f.w, f.h, d.cost);
   if (!r.ok) return r;
   const o = {
-    id: S.nextId++, kind: 'ride', type, x: f.x, y: f.y, w: f.w, h: f.h, rot: rot % 2, z: r.z,
+    id: newId(), kind: 'ride', type, x: f.x, y: f.y, w: f.w, h: f.h, rot: rot % 2, z: r.z,
     price: d.price, open: true, queue: [], riders: [], st: 'idle', timer: 0, anim: 0,
     num: nameFor(type), customers: 0, income: 0, born: S.time,
   };
@@ -272,7 +286,7 @@ export function placeStall(type, x, y) {
   const r = canPlaceBox(x, y, 1, 1, d.cost);
   if (!r.ok) return r;
   const o = {
-    id: S.nextId++, kind: 'stall', type, x, y, w: 1, h: 1, z: r.z, price: d.price, open: true,
+    id: newId(), kind: 'stall', type, x, y, w: 1, h: 1, z: r.z, price: d.price, open: true,
     num: nameFor(type), customers: 0, income: 0,
   };
   claim(o); spend(d.cost, 'build');
@@ -449,7 +463,8 @@ export function snapshot(tiles) {
   };
 }
 export function restore(snap) {
-  for (const id of Object.keys(S.objs)) if (+id >= snap.nextId) removeObj(+id, false);
+  // (in a room only this player's own new things: the others may have built meanwhile)
+  for (const id of Object.keys(S.objs)) if (+id >= snap.nextId && (!net.on || +id % SLOTS === net.slot)) removeObj(+id, false);
   for (const [i, h, w, p, sc] of snap.tiles) { S.h[i] = h; S.water[i] = w; S.path[i] = p; S.scn[i] = sc; }
   // hand back what was spent, without touching what the park earned in the meantime
   S.cash -= snap.delta; S.fin.cur.build = (S.fin.cur.build || 0) - snap.delta; S.names = snap.names;
