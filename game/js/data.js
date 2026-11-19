@@ -24,12 +24,17 @@ export const RIDES = {
   octopus: { w: 3, h: 3, cost: 2800, run: 65, E: 4.8, I: 4.2, Q: 4.0, cap: 16, dur: 14, price: 8 },
   tumbler: { w: 3, h: 2, cost: 3600, run: 80, E: 5.8, I: 6.4, Q: 5.6, cap: 16, dur: 13, price: 9.5 },
   slingshot: { w: 3, h: 1, cost: 4800, run: 100, E: 7.0, I: 8.2, Q: 4.2, cap: 6, dur: 9, price: 12 },
+  planes: { w: 2, h: 2, cost: 1300, run: 35, E: 3.0, I: 1.6, Q: 1.2, cap: 12, dur: 13, price: 5 },
+  minigolf: { w: 3, h: 3, cost: 1500, run: 25, E: 2.7, I: 0.5, Q: 0.1, cap: 12, dur: 22, price: 5 },
+  funhouse: { w: 2, h: 2, cost: 1700, run: 40, E: 3.5, I: 1.9, Q: 1.0, cap: 10, dur: 14, price: 5.5 },
+  cinema: { w: 3, h: 2, cost: 3000, run: 70, E: 4.9, I: 3.2, Q: 2.4, cap: 20, dur: 16, price: 8 },
+  pendulum: { w: 3, h: 3, cost: 4400, run: 95, E: 6.7, I: 7.0, Q: 5.0, cap: 16, dur: 13, price: 11 },
 };
 // shown from gentle to wild
-export const RIDE_ORDER = ['carousel', 'castle', 'slide', 'maze', 'teacups', 'ferris', 'tower', 'swing', 'bumper', 'haunted',
-  'pirate', 'octopus', 'tumbler', 'drop', 'slingshot'];
+export const RIDE_ORDER = ['carousel', 'castle', 'slide', 'maze', 'minigolf', 'teacups', 'planes', 'ferris', 'funhouse', 'tower',
+  'swing', 'bumper', 'cinema', 'haunted', 'pirate', 'octopus', 'tumbler', 'drop', 'pendulum', 'slingshot'];
 
-// Stalls (1x1). need = which guest need they serve.
+// Stalls (1x1). need = which guest need they serve ('aid' takes away nausea). A price of 0 means free to use.
 export const STALLS = {
   burger: { cost: 350, run: 20, price: 5, need: 'hunger' },
   drinks: { cost: 300, run: 15, price: 3.5, need: 'thirst' },
@@ -39,8 +44,11 @@ export const STALLS = {
   candy: { cost: 300, run: 15, price: 3.5, need: 'treat' },
   coffee: { cost: 380, run: 20, price: 4, need: 'thirst' },
   hats: { cost: 500, run: 20, price: 9, need: 'hat' },
+  pizza: { cost: 400, run: 20, price: 6, need: 'hunger' },
+  popcorn: { cost: 300, run: 15, price: 3.5, need: 'treat' },
+  firstaid: { cost: 350, run: 15, price: 0, need: 'aid' },
 };
-export const STALL_ORDER = ['burger', 'drinks', 'icecream', 'candy', 'coffee', 'toilet', 'gift', 'hats'];
+export const STALL_ORDER = ['burger', 'pizza', 'drinks', 'icecream', 'candy', 'popcorn', 'coffee', 'toilet', 'firstaid', 'gift', 'hats'];
 
 // Scenery (1x1). Index in this array is the code stored in the map. beauty feeds the park rating.
 export const SCENERY = [
@@ -64,10 +72,23 @@ export const SCENERY = [
   { id: 'snowman', cost: 40, beauty: 3 },
   { id: 'picnic', cost: 50, beauty: 2 },
   { id: 'snowpine', cost: 25, beauty: 2 },
+  { id: 'birch', cost: 25, beauty: 2 },
+  { id: 'cherry', cost: 40, beauty: 3 },
+  { id: 'maple', cost: 35, beauty: 3 },
+  { id: 'tulips', cost: 20, beauty: 2 },
+  { id: 'planter', cost: 35, beauty: 2 },
+  { id: 'bin', cost: 25, beauty: 0 }, // guests with rubbish in their hands use one that stands by their path
+  { id: 'clock', cost: 120, beauty: 4 },
+  { id: 'gazebo', cost: 260, beauty: 8 },
+  { id: 'windmill', cost: 200, beauty: 6 },
+  { id: 'mushroom', cost: 70, beauty: 3 },
+  { id: 'lantern', cost: 45, beauty: 2 },
+  { id: 'fence', cost: 12, beauty: 1 },
 ];
 // the order in the build menu
-export const SCENERY_ORDER = ['oak', 'pine', 'snowpine', 'palm', 'cactus', 'bush', 'hedge', 'topiary', 'flowers', 'rock',
-  'bench', 'picnic', 'lamp', 'torch', 'flag', 'fountain', 'statue', 'snowman'];
+export const SCENERY_ORDER = ['oak', 'birch', 'pine', 'snowpine', 'cherry', 'maple', 'palm', 'cactus', 'bush', 'hedge', 'topiary', 'flowers',
+  'tulips', 'planter', 'rock', 'fence', 'bench', 'bin', 'picnic', 'lamp', 'lantern', 'torch', 'flag', 'clock', 'mushroom', 'fountain',
+  'statue', 'windmill', 'gazebo', 'snowman'];
 export const SCN = Object.fromEntries(SCENERY.map((s, i) => (s ? [s.id, i] : ['none', 0])));
 
 // Coaster types. maxH = how many height levels above the station the track may climb.
