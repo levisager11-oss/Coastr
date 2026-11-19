@@ -36,6 +36,7 @@ export function buildDemo() {
     c.capacity = coasterCap(c);
     c.open = c.closed && c.sim.ok;
   }
+  S.staff = { clean: 2, mech: 0, fun: 2 };
   S.open = true; S.fee = 5; S.rating = 800;
   for (let i = 0; i < 1500; i++) tick(0.1);
   S.speed = 1;

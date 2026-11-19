@@ -1,7 +1,7 @@
 // World state and every way to change it (build, demolish, terrain, money, save/load).
 import {
   N, DX, DY, MAX_TERRAIN, BASE_H, RIDES, STALLS, SCENERY, SCN, COASTERS, START_UNLOCKS, RESEARCH,
-  RIDE_ORDER, STALL_ORDER, COASTER_ORDER, SCENARIOS,
+  RIDE_ORDER, STALL_ORDER, COASTER_ORDER, SCENARIOS, isPlat,
 } from './data.js';
 
 export const S = {}; // the one mutable game state; filled by newGame / loadGame
@@ -40,7 +40,7 @@ export function newGame(mode, scenario) {
   Object.assign(S, {
     v: 2, mode, sc, theme: SC.theme, sandbox: mode === 'sandbox',
     h: new Uint8Array(N * N).fill(BASE_H), water: new Uint8Array(N * N), path: new Uint8Array(N * N),
-    scn: new Uint8Array(N * N), occ: new Int32Array(N * N),
+    scn: new Uint8Array(N * N), occ: new Int32Array(N * N), lit: new Uint8Array(N * N),
     objs: {}, nextId: 1, trk: new Map(), pv: freshCount, tv: freshCount,
     ent: { x: N >> 1, y: N - 1 },
     cash: mode === 'sandbox' ? 0 : SC.cash, loan: 0, fee: 8, open: false,
@@ -49,6 +49,11 @@ export function newGame(mode, scenario) {
     goal: 0, goalsDone: false, stars: 0, ach: {}, tut: 0, marketing: 0, turnedAway: 0,
     fin: { cur: {}, last: {} }, thoughts: {}, sceneryCount: 0, sentValue: 0, sentGuests: 0,
     names: {}, wx: { kind: 'sun', t: 90 }, event: null, evNext: 260, yr: { guests: 0, income: 0, peak: 0 }, awards: {}, name: '',
+    // staff: how many of each kind are employed; crew: the people themselves (made again from the numbers, never saved)
+    staff: { clean: 0, mech: 0, fun: 0 }, crew: [],
+    // challenges: cur = the one being worked on, offers = the three to choose from, total = how many were won,
+    // n = counts every challenge handed out; chPick = a player's choice, taken up by the host's game
+    ch: { cur: null, offers: [], total: 0, n: 0 }, chPick: null,
   });
   for (const u of [...START_UNLOCKS, ...SC.extra]) S.unlocked[u] = 1;
   if (S.sandbox) { unlockAll(); S.tut = 99; }
@@ -57,7 +62,7 @@ export function newGame(mode, scenario) {
   return S;
 }
 function unlockAll() {
-  for (const u of [...RIDE_ORDER, ...STALL_ORDER, ...COASTER_ORDER, 'booster']) S.unlocked[u] = 1;
+  for (const u of [...RIDE_ORDER, ...STALL_ORDER, ...COASTER_ORDER, 'booster', 'photo']) S.unlocked[u] = 1;
   for (const s of SCENERY) if (s) S.unlocked[s.id] = 1;
   S.research.done = RESEARCH.length;
 }
@@ -177,16 +182,36 @@ export function minTrackZ(i) {
 export function objTiles(o) {
   const out = [];
   if (o.kind === 'coaster') {
-    for (const p of o.pieces) if (p.t === 'station') out.push([p.x, p.y, p.h0]);
+    for (const p of o.pieces) if (isPlat(p)) out.push([p.x, p.y, p.h0]);
   } else {
     for (let j = 0; j < o.h; j++) for (let i = 0; i < o.w; i++) out.push([o.x + i, o.y + j, o.z]);
   }
   return out;
 }
-/** Path tiles next to an object where guests get on. */
-export function accessTiles(o) {
+/**
+ * The platforms of a tracked ride: the station first, then every further run of platform pieces (a railway's
+ * stops), each as { a, b } = its first and last piece. Kept on the ride until its track changes.
+ */
+export function platforms(c) {
+  if (c.plats && c.platsN === c.pieces.length) return c.plats;
+  const out = [];
+  for (let i = 0; i < c.pieces.length; i++) {
+    if (!isPlat(c.pieces[i])) continue;
+    const last = out[out.length - 1];
+    if (last && last.b === i - 1 && c.pieces[i].t === c.pieces[last.a].t) last.b = i; else out.push({ a: i, b: i });
+  }
+  c.plats = out; c.platsN = c.pieces.length;
+  return out;
+}
+/** Path tiles next to an object where guests get on. plat: only those of one platform of a tracked ride. */
+export function accessTiles(o, plat) {
   const out = [], seen = new Set();
-  for (const [x, y, z] of objTiles(o)) {
+  let tiles = objTiles(o);
+  if (plat !== undefined && o.kind === 'coaster') {
+    const pl = platforms(o)[plat];
+    tiles = pl ? o.pieces.slice(pl.a, pl.b + 1).map((p) => [p.x, p.y, p.h0]) : [];
+  }
+  for (const [x, y, z] of tiles) {
     for (let d = 0; d < 4; d++) {
       const ax = x + DX[d], ay = y + DY[d];
       if (!inB(ax, ay)) continue;
@@ -241,7 +266,7 @@ export function removePath(x, y) {
   const i = idx(x, y);
   if (!S.path[i]) return no('e_none');
   if (x === S.ent.x && y === S.ent.y) return no('e_entrance');
-  S.path[i] = 0; S.pv++;
+  S.path[i] = 0; S.lit[i] = 0; S.pv++;
   earn(5, 'build');
   return OK;
 }
@@ -425,7 +450,7 @@ export function registerPiece(c, pi) {
   for (const cell of pieceCells(p)) {
     let list = S.trk.get(cell.i);
     if (!list) { list = []; S.trk.set(cell.i, list); }
-    list.push({ c: c.id, p: pi, z0: cell.z0, z1: cell.z1, station: p.t === 'station' });
+    list.push({ c: c.id, p: pi, z0: cell.z0, z1: cell.z1, station: isPlat(p) });
   }
 }
 export function unregisterPiece(c, pi) {
@@ -505,6 +530,7 @@ export function serialize() {
     const o = S.objs[id];
     const c = { ...o, queue: [], riders: [], st: 'idle', timer: 0 };
     delete c.sim; delete c.geo; delete c.test; delete c.pop; delete c.spin; delete c.anim; delete c.noAccess; delete c.runs; delete c.gap; delete c.load;
+    delete c.plats; delete c.platsN; delete c.fixer;
     if (c.pieces) c.pieces = c.pieces.map((p) => ({ t: p.t, x: p.x, y: p.y, d: p.d, h0: p.h0, h1: p.h1, chain: p.chain ? 1 : 0, bank: p.bank ? 1 : 0, cost: p.cost || 0 }));
     objs.push(c);
   }
@@ -515,6 +541,7 @@ export function serialize() {
     goalsDone: S.goalsDone, stars: S.stars, ach: S.ach, tut: S.tut, marketing: S.marketing, fin: S.fin, names: S.names,
     guestCount: S.guests.length, sentValue: S.sentValue, sentGuests: S.sentGuests, wx: S.wx,
     event: S.event, evNext: S.evNext, yr: S.yr, awards: S.awards, name: S.name,
+    lit: encR(S.lit), staff: S.staff, ch: S.ch, sentCh: S.sentCh || 0,
   };
 }
 export function deserialize(d) {
@@ -530,7 +557,11 @@ export function deserialize(d) {
       for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) S[k][idx(x + ox, y + oy)] = old[x + y * n];
     }
   }
-  for (let i = 0; i < N * N; i++) if (!SCENERY[S.scn[i]]) S.scn[i] = 0; // a code this version does not know
+  if (d.lit && n === N) decR(d.lit, S.lit);
+  for (let i = 0; i < N * N; i++) {
+    if (!SCENERY[S.scn[i]]) S.scn[i] = 0; // a code this version does not know
+    if (!S.path[i] || S.lit[i] > 3) S.lit[i] = 0;
+  }
   S.occ.fill(0);
   for (const o of d.objs) {
     if (o.kind === 'coaster') { for (const p of o.pieces) { p.x += ox; p.y += oy; } }
@@ -541,9 +572,15 @@ export function deserialize(d) {
   }
   for (const k of ['nextId', 'cash', 'loan', 'fee', 'open', 'time', 'rating', 'peakGuests', 'unlocked',
     'research', 'goal', 'goalsDone', 'stars', 'ach', 'tut', 'marketing', 'fin', 'names', 'sentValue', 'sentGuests', 'wx',
-    'event', 'evNext', 'yr', 'awards', 'name']) {
+    'event', 'evNext', 'yr', 'awards', 'name', 'staff', 'ch', 'sentCh']) {
     if (d[k] !== undefined) S[k] = d[k];
   }
+  // things every park of this kind starts with that were added to the game since this one was saved
+  for (const u of [...START_UNLOCKS, ...(SCENARIOS[S.sc] || SCENARIOS.meadows).extra]) S.unlocked[u] = 1;
+  S.staff = Object.assign({ clean: 0, mech: 0, fun: 0 }, S.staff);
+  S.ch = Object.assign({ cur: null, offers: [], total: 0, n: 0 }, S.ch);
+  // a park from before there was staff: the first look at it hires a few people (see sim.js)
+  if (d.staff === undefined) S.staffNew = true;
   if (S.sandbox) unlockAll(); // things added to the game since this park was saved
   S.restoreGuests = Math.min(d.guestCount || 0, 400);
   rebuildTrackRegistry();

@@ -1,16 +1,21 @@
 // The park simulation: time, rides, guest arrivals, money, research, goals, rating.
 import {
-  N, RIDES, STALLS, SCENERY, COASTERS, RESEARCH, RESEARCH_LEVELS, SCENARIOS, DAY_LEN, MONTH_DAYS, MAX_GUESTS, DAY_CYCLE,
+  N, RIDES, STALLS, SCENERY, COASTERS, RESEARCH, RESEARCH_LEVELS, SCENARIOS, DAY_LEN, MONTH_DAYS, MAX_GUESTS, DAY_CYCLE, CHALLENGES,
+  isCoaster,
 } from './data.js';
-import { S, idx, accessTiles, spend, earn, canAfford, parkValue, emit, countWater, objValue, net } from './world.js';
+import { S, idx, accessTiles, spend, earn, canAfford, parkValue, emit, countWater, objValue, net, platforms } from './world.js';
 import { field, makeGuest, updateGuest, unloadRider, rideUsable, rideStats, think, buzz } from './guests.js';
-import { recompute } from './coaster.js';
+import { recompute, STATION_HEAD } from './coaster.js';
+import { syncCrew, updateCrew, cheer, wages, resetCrew } from './staff.js';
 
 let secAcc = 0, spawnAcc = 0;
 
 export function coasterCap(c) { return COASTERS[c.ctype].cap; }
-/** How many trains a track has room for: one for every 70 m, three at most. */
-export function maxTrains(c) { return c.sim && c.sim.ok ? Math.max(1, Math.min(3, Math.floor(c.sim.L / 70))) : 1; }
+/** How many trains a track has room for: one for every 70 m and three at most on a coaster (more boats on a flume). */
+export function maxTrains(c) {
+  const T = COASTERS[c.ctype];
+  return c.sim && c.sim.ok ? Math.max(1, Math.min(T.maxTrains || 3, Math.floor(c.sim.L / (T.trainGap || 70)))) : 1;
+}
 export const trainsOf = (c) => Math.max(1, Math.min(maxTrains(c), c.trains || 1));
 export const trainCost = (c) => Math.round(COASTERS[c.ctype].station * 0.6);
 
@@ -31,12 +36,26 @@ export function initAfterLoad() {
     }
     S.restoreGuests = 0;
   }
+  resetCrew();
+  S.crew = []; S.crewSpread = true; S.litter = 0;
+  if (S.staffNew) {
+    // a park from before there was staff: hire the people it needs, so it carries on as well as it did
+    S.staffNew = false;
+    if (S.guests.length >= 20) {
+      let rides = 0;
+      for (const id in S.objs) if (S.objs[id].kind !== 'stall') rides++;
+      S.staff.clean = Math.min(5, Math.ceil(S.guests.length / 60));
+      S.staff.mech = rides >= 4 ? 1 : 0;
+      emit('staffnew', { clean: S.staff.clean, mech: S.staff.mech });
+    }
+  }
+  syncCrew();
   secAcc = 0; spawnAcc = 0;
 }
 
 // ---------- park numbers ----------
 export function attraction() {
-  let a = 0, best = 0, rides = 0, food = 0, drink = 0, toilet = 0, coasters = 0, maxInv = 0, maxHm = 0, maxKmh = 0;
+  let a = 0, best = 0, top = 0, rides = 0, food = 0, drink = 0, toilet = 0, coasters = 0, maxInv = 0, maxHm = 0, maxKmh = 0, flume = 0, rail = 0, flat = 0;
   for (const id in S.objs) {
     const o = S.objs[id];
     if (o.kind === 'stall') {
@@ -49,13 +68,20 @@ export function attraction() {
       const st = rideStats(o);
       rides++;
       if (o.kind === 'coaster') {
-        a += (8 + st.E * 6) * buzz(o); best = Math.max(best, st.E); coasters++;
-        maxInv = Math.max(maxInv, o.inv || 0); maxHm = Math.max(maxHm, o.sim.maxH * 2); maxKmh = Math.max(maxKmh, o.sim.maxV * 3.6);
+        a += (8 + st.E * 6) * buzz(o); top = Math.max(top, st.E);
+        const kind = COASTERS[o.ctype].kind;
+        if (kind === 'flume') flume = Math.max(flume, st.E);
+        else if (kind === 'train') rail = Math.max(rail, platforms(o).length);
+        else {
+          // only real coasters count for the coaster goals
+          best = Math.max(best, st.E); coasters++;
+          maxInv = Math.max(maxInv, o.inv || 0); maxHm = Math.max(maxHm, o.sim.maxH * 2); maxKmh = Math.max(maxKmh, o.sim.maxV * 3.6);
+        }
       }
-      else a += (5 + st.E * 3) * buzz(o);
+      else { a += (5 + st.E * 3) * buzz(o); flat++; }
     }
   }
-  return { a, best, rides, food, drink, toilet, coasters, maxInv, maxHm, maxKmh };
+  return { a, flat, best, top, rides, food, drink, toilet, coasters, maxInv, maxHm, maxKmh, flume, rail };
 }
 export function beauty() {
   let b = 0;
@@ -94,7 +120,8 @@ function updateWeather(dt) {
   w.t = w.kind === 'sun' ? 70 + Math.random() * 90 : 35 + Math.random() * 40;
 }
 // Now and then something happens for a month or so: holidays, a heat wave, coaster fans, a critic.
-const EVENTS = { holiday: 60, heat: 45, fans: 60, critic: 45 };
+// A TV crew wants to film a really exciting ride; at a food festival guests are hungrier and pay more for food.
+const EVENTS = { holiday: 60, heat: 45, fans: 60, critic: 45, tv: 45, festival: 50 };
 function updateEvents(dt) {
   if (S.demo) return;
   if (S.event) {
@@ -103,8 +130,15 @@ function updateEvents(dt) {
     const id = S.event.id;
     S.event = null; S.evNext = S.time + 170 + Math.random() * 130;
     let prize = 0;
-    if (id === 'critic' && S.rating >= 650) { prize = 1500; if (!S.sandbox) earn(prize, 'rewards'); S.marketing = Math.max(S.marketing, 2); }
-    emit('eventend', { id, prize, good: id !== 'critic' || prize > 0 });
+    let good = true;
+    if (id === 'critic') {
+      good = S.rating >= 650;
+      if (good) { prize = 1500; if (!S.sandbox) earn(prize, 'rewards'); S.marketing = Math.max(S.marketing, 2); }
+    } else if (id === 'tv') {
+      good = (S.att ? S.att.top : 0) >= 6;
+      if (good) S.marketing = Math.max(S.marketing, 3);
+    }
+    emit('eventend', { id, prize, good });
     return;
   }
   if (S.time < (S.evNext || 0)) return;
@@ -126,6 +160,9 @@ function yearEnd(year) {
   if ((S.beautyNow || 0) >= 450) won.push('aw_beauty');
   if (Y.peak >= 150) won.push('aw_busy');
   if (S.rating >= 750) won.push('aw_park');
+  if (Y.peak >= 60 && (S.litter || 0) <= 4) won.push('aw_clean');
+  if (att.flat >= 10) won.push('aw_family');
+  if (att.flume >= 5) won.push('aw_water');
   if (!S.awards) S.awards = {};
   for (const id of won) { S.awards[id] = (S.awards[id] || 0) + 1; if (!S.sandbox) earn(1000, 'rewards'); }
   emit('year', { year, guests: Y.guests, income: Math.round(Y.income), won, prize: S.sandbox ? 0 : won.length * 1000 });
@@ -166,8 +203,9 @@ function updateRating(att) {
   const n = S.guests.length;
   const happy = (hs + 60 * 5) / (n + 5);
   const clamp = (v) => Math.max(0, Math.min(1, v));
+  // (litter lying about costs up to a tenth of the rating)
   const target = 1000 * (0.3 * clamp((happy - 30) / 60) + 0.3 * clamp(att.a / 300) + 0.15 * clamp(S.beautyNow / 900)
-    + 0.1 * ((att.food + att.drink + att.toilet) / 3) + 0.15 * clamp(att.best / 8));
+    + 0.1 * ((att.food + att.drink + att.toilet) / 3) + 0.15 * clamp(att.top / 8) - 0.1 * clamp((S.litter || 0) / 90));
   S.rating += (target - S.rating) * 0.06;
 }
 
@@ -176,6 +214,47 @@ function updateRating(att) {
 function fare(o) {
   if (net.quiet) return;
   earn(o.price, 'rides'); o.customers++; o.income += o.price;
+}
+/** Send waiting guests away from a ride (back onto the path beside it). */
+function sendAway(o, ids, thought) {
+  const tiles = accessTiles(o);
+  for (const id of ids) {
+    const g = S.gmap.get(id);
+    if (!g) continue;
+    g.st = 'walk'; g.obj = 0; g.prog = 1; g.cool = 4;
+    if (tiles.length && !thought) { const i = tiles[0]; g.tx = g.nx = i % N; g.ty = g.ny = (i / N) | 0; }
+    if (thought && Math.random() < 0.5) think(g, thought, o.id);
+  }
+}
+/** Who gets on at a platform: the first `cap` guests waiting there. They pay as they board. */
+function board(o, plat, cap) {
+  const riders = [];
+  if (o.kind !== 'coaster' || platforms(o).length < 2) riders.push(...o.queue.splice(0, cap));
+  else {
+    for (let k = 0; k < o.queue.length && riders.length < cap;) {
+      const g = S.gmap.get(o.queue[k]);
+      if (!g || (g.plat || 0) === plat) riders.push(o.queue.splice(k, 1)[0]); else k++;
+    }
+  }
+  for (const id of riders) {
+    const g = S.gmap.get(id);
+    if (!g) continue;
+    g.st = 'ride'; g.cash -= o.price;
+    fare(o);
+  }
+  return riders;
+}
+// Rides break down now and then, old ones more often. Nobody gets on until a mechanic has been (or the
+// repair service was called). With no mechanic in the park the maker's own people turn up after two months.
+function breakdowns() {
+  if (S.demo || S.tut < 99 && S.time < 6 * 60) return;
+  for (const id in S.objs) {
+    const o = S.objs[id];
+    if (o.kind === 'stall' || o.broken || !rideUsable(o)) continue;
+    const m = (S.time - (o.born || 0)) / 60;
+    if (m < 4) continue;
+    if (Math.random() < 0.0014 * (m > 36 ? 2.4 : m > 18 ? 1.5 : 1)) { o.broken = S.time || 1; emit('broken', { id: o.id }); }
+  }
 }
 function updateRide(o, dt) {
   const isC = o.kind === 'coaster';
@@ -191,31 +270,25 @@ function updateRide(o, dt) {
   }
   if (!rideUsable(o)) {
     if (o.queue.length || o.riders.length) {
-      const tiles = accessTiles(o);
-      for (const id of [...o.queue, ...o.riders]) {
-        const g = S.gmap.get(id);
-        if (g) { g.st = 'walk'; g.obj = 0; g.prog = 1; if (tiles.length) { const i = tiles[0]; g.tx = g.nx = i % N; g.ty = g.ny = (i / N) | 0; } }
-      }
+      sendAway(o, [...o.queue, ...o.riders]);
       o.queue = []; o.riders = [];
     }
     o.st = 'idle'; o.runs = [];
     return;
   }
+  if (o.broken) {
+    if (o.queue.length) { sendAway(o, o.queue, 'th_broken'); o.queue = []; }
+    if (!net.quiet && !(S.staff && S.staff.mech) && S.time - o.broken > 120) { o.broken = 0; emit('fixed', { id: o.id }); }
+  }
   if (isC) { updateTrains(o, dt, cap); return; }
   if (o.st === 'idle') {
-    if (o.queue.length) { o.st = 'load'; o.timer = 4; }
+    if (o.queue.length && !o.broken) { o.st = 'load'; o.timer = 4; }
   } else if (o.st === 'load') {
     o.timer -= dt;
     if (o.queue.length >= cap) o.timer = Math.min(o.timer, 0.8);
     if (o.timer <= 0) {
       if (!o.queue.length) { o.st = 'idle'; return; }
-      o.riders = o.queue.splice(0, cap);
-      for (const id of o.riders) {
-        const g = S.gmap.get(id);
-        if (!g) continue;
-        g.st = 'ride'; g.cash -= o.price;
-        fare(o);
-      }
+      o.riders = board(o, 0, cap);
       o.st = 'run'; o.runT = 0;
       o.timer = isC ? o.sim.T : st.dur;
       emit('dispatch', { id: o.id, sum: o.price * o.riders.length });
@@ -233,12 +306,24 @@ function updateRide(o, dt) {
 // A coaster can have several trains out at once. Each is a run {t, riders}; the next one leaves when
 // the one before is far enough ahead.
 function updateTrains(o, dt, cap) {
-  const T = o.sim.T, n = trainsOf(o);
+  const T = o.sim.T, n = trainsOf(o), stops = o.sim.stops || [], t0 = STATION_HEAD / 3.5;
   if (!o.runs) o.runs = [];
-  let home = false;
-  for (const r of o.runs) { r.t += dt; if (r.t >= T) home = true; }
+  let home = false, called = false;
+  for (const r of o.runs) {
+    r.t += dt;
+    if (r.t >= T) home = true;
+    // a railway's train calls at every platform on its way round: everyone gets off, and whoever waits there gets on
+    while ((r.next || 0) < stops.length && r.t + t0 >= stops[r.next || 0].t) {
+      const k = (r.next = (r.next || 0) + 1), tiles = accessTiles(o, k);
+      if (!tiles.length) continue;
+      for (const id of r.riders) { const g = S.gmap.get(id); if (g) unloadRider(g, o, tiles); }
+      r.riders = board(o, k, cap);
+      called = true;
+    }
+  }
+  if (called) o.riders = o.runs.flatMap((r) => r.riders);
   if (home) {
-    const tiles = accessTiles(o);
+    const tiles = accessTiles(o, stops.length ? 0 : undefined);
     o.runs = o.runs.filter((r) => {
       if (r.t < T) return true;
       for (const id of r.riders) { const g = S.gmap.get(id); if (g) unloadRider(g, o, tiles); }
@@ -247,19 +332,14 @@ function updateTrains(o, dt, cap) {
     o.riders = o.runs.flatMap((r) => r.riders);
   }
   o.gap = (o.gap || 0) + dt;
-  const free = o.runs.length < n && (!o.runs.length || o.gap >= Math.max(9, T / n));
+  const free = !o.broken && o.runs.length < n && (!o.runs.length || o.gap >= Math.max(9, T / n));
   if (!free || !o.queue.length) o.load = 0;
   else {
     o.load = (o.load || 0) + dt;
+    // (a railway's train also sets off empty when someone is waiting at another platform)
     if (o.load >= (o.queue.length >= cap ? 0.8 : 4)) {
-      const riders = o.queue.splice(0, cap);
-      for (const id of riders) {
-        const g = S.gmap.get(id);
-        if (!g) continue;
-        g.st = 'ride'; g.cash -= o.price;
-        fare(o);
-      }
-      o.runs.push({ t: 0, riders });
+      const riders = board(o, 0, cap);
+      o.runs.push({ t: 0, riders, next: 0 });
       o.riders = o.runs.flatMap((r) => r.riders);
       o.gap = 0; o.load = 0;
       emit('dispatch', { id: o.id, sum: o.price * riders.length });
@@ -329,10 +409,122 @@ function checkGoals(att) {
   const st = starsFor(S.goal);
   if (st > (S.stars || 0)) { S.stars = st; emit('star', { n: st }); }
 }
+
+// ---------- challenges ----------
+// Optional tasks with a time limit and a reward. Three are on offer at a time; one can be worked on.
+const up = (n, k = 10) => Math.ceil(n / k) * k;
+const avgHappy = () => { let hs = 0; for (const g of S.guests) hs += g.happy; return S.guests.length ? hs / S.guests.length : 0; };
+function tally() {
+  let stalls = 0, rail = 0;
+  for (const id in S.objs) {
+    const o = S.objs[id];
+    if (o.kind === 'stall') stalls += o.income || 0;
+    else if (o.kind === 'coaster' && COASTERS[o.ctype].kind === 'train') rail += o.customers || 0;
+  }
+  return { stalls, rail, scenery: S.sceneryCount, value: parkValue() };
+}
+/** What a challenge of this kind would ask for in the park as it is now, or null if it would make no sense. */
+function makeChallenge(def, att) {
+  const g = S.guests.length, c = { k: def.k, months: def.months };
+  switch (def.k) {
+    case 'guests': c.n = up(Math.max(40, g * 1.3 + 10)); if (c.n > MAX_GUESTS - 20) return null; c.reward = 1000 + c.n * 12; break;
+    case 'rating': if (S.rating > 870) return null; c.n = up(S.rating + 60); c.reward = 2500; break;
+    case 'happy': { const h = avgHappy(); if (h > 86 || g < 20) return null; c.n = Math.max(75, Math.min(92, Math.round(h + 7))); c.g = Math.max(40, up(g * 0.8)); c.reward = 2000; break; }
+    case 'clean': if (g < 25) return null; c.n = 5; c.g = Math.max(30, up(g * 0.7)); c.reward = 1800; break;
+    case 'stalls': c.n = Math.max(600, up(g * 14, 100)); c.reward = 1200 + up(c.n * 0.5, 100); break;
+    case 'scenery': c.n = 50; c.reward = 1500; break;
+    case 'rides': c.n = att.rides + 3; c.reward = 2500; break;
+    case 'value': { const v = parkValue(); c.n = up(Math.max(v * 1.25, v + 8000), 1000); c.reward = 3000; break; }
+    case 'budget': c.n = 5.5; c.cost = 9000; c.reward = 3500; break;
+    case 'air': c.n = 4; c.reward = 3000; break;
+    case 'fast': c.n = 95; c.reward = 3500; break;
+    case 'flume': c.n = 4.8; c.reward = 3000; break;
+    case 'rail': c.n = 120; c.reward = 2500; break;
+    default: return null;
+  }
+  return c;
+}
+/** How far a challenge has come, 0 to 1. */
+export function challengeProgress(c, att) {
+  att = att || S.att || attraction();
+  const b = c.base || {}, g = S.guests.length;
+  // for the building challenges: the best of the tracked rides opened since the challenge began
+  const fresh = (test) => {
+    let best = 0;
+    for (const id in S.objs) {
+      const o = S.objs[id];
+      if (o.kind === 'coaster' && rideUsable(o) && (o.born || 0) >= (c.start || 0) - 1) best = Math.max(best, test(o, COASTERS[o.ctype].kind) || 0);
+    }
+    return best;
+  };
+  let p = 0;
+  switch (c.k) {
+    case 'guests': p = g / c.n; break;
+    case 'rating': p = S.rating / c.n; break;
+    case 'happy': p = (avgHappy() / c.n) * (g >= c.g ? 1 : Math.min(0.95, g / c.g)); break;
+    case 'clean': p = c.since === undefined ? 0 : (S.time - c.since) / 60; break;
+    case 'stalls': p = (tally().stalls - (b.stalls || 0)) / c.n; break;
+    case 'scenery': p = (S.sceneryCount - (b.scenery || 0)) / c.n; break;
+    case 'rides': p = att.rides / c.n; break;
+    case 'value': p = (parkValue() - (b.value || 0)) / Math.max(1, c.n - (b.value || 0)); break;
+    case 'budget': p = fresh((o, kind) => !kind && o.cost <= c.cost && o.E / c.n); break;
+    case 'air': p = fresh((o, kind) => !kind && o.sim.air / c.n); break;
+    case 'fast': p = fresh((o, kind) => !kind && o.I <= 8 && (o.sim.maxV * 3.6) / c.n); break;
+    case 'flume': p = fresh((o, kind) => kind === 'flume' && o.E / c.n); break;
+    case 'rail': p = (tally().rail - (b.rail || 0)) / c.n; break;
+    default: p = 0;
+  }
+  return Math.max(0, Math.min(1, p));
+}
+/** Keep three challenges on offer (all new ones when `fresh`). */
+function offerChallenges(att, fresh) {
+  const C = S.ch;
+  if (fresh) C.offers = [];
+  const taken = new Set(C.offers.map((c) => c.k));
+  if (C.cur) taken.add(C.cur.k);
+  const pool = CHALLENGES.filter((d) => !taken.has(d.k) && (!d.need || S.unlocked[d.need]) && d.k !== C.last);
+  while (C.offers.length < 3 && pool.length) {
+    const d = pool.splice((Math.random() * pool.length) | 0, 1)[0], c = makeChallenge(d, att);
+    if (c) C.offers.push(c);
+  }
+}
+function updateChallenges(att) {
+  if (S.sandbox || S.demo) return;
+  const C = S.ch;
+  // a player's choice (it may come from a friend's game): start offer number i, or give up with -1
+  const pk = S.chPick;
+  if (pk && pk.id !== C.pick) {
+    C.pick = pk.id;
+    if (pk.i < 0 && C.cur) { C.last = C.cur.k; C.cur = null; }
+    else if (pk.i >= 0 && !C.cur && C.offers[pk.i]) {
+      const c = C.offers.splice(pk.i, 1)[0];
+      c.start = S.time; c.end = S.time + c.months * 60; c.base = tally();
+      if (c.k === 'clean') c.since = S.time;
+      C.cur = c;
+      emit('chstart', { k: c.k });
+    }
+  }
+  const c = C.cur;
+  if (c) {
+    if (c.k === 'clean' && ((S.litter || 0) > c.n || S.guests.length < c.g)) c.since = S.time;
+    if (challengeProgress(c, att) >= 1) {
+      earn(c.reward, 'rewards');
+      C.total = (C.total || 0) + 1; C.last = c.k; C.cur = null;
+      emit('chdone', { k: c.k, reward: c.reward, total: C.total });
+      award('challenger');
+      if (C.total >= 10) award('challenge-10');
+    } else if (S.time > c.end) { C.last = c.k; C.cur = null; emit('chfail', { k: c.k }); }
+  }
+  if (S.open || C.offers.length) offerChallenges(att, false);
+}
+/** Choose one of the challenges on offer (i = 0..2), or give up the one being worked on (i = -1). */
+export function pickChallenge(i) { S.chPick = { i, id: Math.floor(Math.random() * 1e9) + 1 }; }
 function checkAchievements(att) {
   if (S.sandbox) return;
   const n = S.guests.length;
-  if (att.rides - att.coasters > 0) award('first-ride');
+  if (att.flat) award('first-ride');
+  if (att.flume) award('splash');
+  if (att.rail >= 2) award('all-aboard');
   if (att.coasters) award('first-coaster');
   if (n >= 50) award('guests-50');
   if (n >= 150) award('guests-150');
@@ -343,7 +535,8 @@ function checkAchievements(att) {
   if (parkValue() >= 250000) award('tycoon');
   for (const id in S.objs) {
     const o = S.objs[id];
-    if (o.kind !== 'coaster' || !rideUsable(o)) continue;
+    if (o.kind !== 'coaster' || !rideUsable(o) || !isCoaster(o.ctype)) continue;
+    if (o.sim && o.sim.maxH >= 29.5) award('giant');
     if (o.loops) award('looping');
     if ((o.inv || 0) >= 3) award('twisted');
     if (o.sim && o.sim.maxV * 3.6 >= 100) award('speed-100');
@@ -356,6 +549,15 @@ function everySecond() {
   const att = attraction();
   S.att = att;
   if (S.beautyPv !== S.pv) { S.beautyNow = beauty(); S.beautyPv = S.pv; S.waterNow = countWater(); }
+  syncCrew();
+  // how much litter lies about; a little of it is blown away or picked up by tidy guests every second
+  let litter = 0;
+  for (let i = 0, lit = S.lit; i < N * N; i++) {
+    if (!lit[i]) continue;
+    if (!net.mirror && Math.random() < 0.004) lit[i]--;
+    litter += lit[i];
+  }
+  S.litter = litter;
   // a guest's copy of a shared park: the host's game keeps the rating, goals and awards, and how
   // many guests there are; this copy only brings in as many guests to walk about
   if (net.mirror) { S.target = S.open ? net.hostGuests : 0; return; }
@@ -363,12 +565,16 @@ function everySecond() {
   S.target = S.open ? guestTarget(att) : 0;
   if (S.guests.length > S.peakGuests) S.peakGuests = S.guests.length;
   if (S.yr && S.guests.length > S.yr.peak) S.yr.peak = S.guests.length;
+  cheer();
   checkGoals(att);
   checkAchievements(att);
+  updateChallenges(att);
+  if (!S.tipLitter && litter > 25 && !S.staff.clean) { S.tipLitter = 1; emit('tip', { id: 'litter' }); }
   if (!S.sandbox && S.waterNow >= 60) award('lake');
 }
 function newDay() {
   researchDay();
+  breakdowns();
   const d = date();
   if (d.day === 1) newMonth();
 }
@@ -379,6 +585,8 @@ function newMonth() {
     run += o.kind === 'coaster' ? COASTERS[o.ctype].run * (1 + 0.3 * (trainsOf(o) - 1)) : (o.kind === 'ride' ? RIDES : STALLS)[o.type].run;
   }
   if (run) spend(run, 'running');
+  const pay = wages();
+  if (pay) spend(pay, 'wages');
   if (S.loan > 0) spend(Math.round(S.loan * 0.01), 'interest');
   if (S.marketing > 0) S.marketing--;
   if (!S.yr) S.yr = { guests: 0, income: 0, peak: 0 };
@@ -389,6 +597,8 @@ function newMonth() {
   if (dd.month === 0 && !S.demo) yearEnd(dd.year - 1);
   for (const k in S.thoughts) { S.thoughts[k] = Math.floor(S.thoughts[k] * 0.4); if (!S.thoughts[k]) delete S.thoughts[k]; }
   S.turnedAway = 0;
+  if (!S.sandbox && S.guests.length >= 100 && (S.litter || 0) <= 3) award('spotless');
+  if (!S.sandbox) offerChallenges(S.att || attraction(), true);
   emit('month');
 }
 
@@ -419,6 +629,7 @@ export function tick(dt) {
   let gone = false;
   for (const g of S.guests) { updateGuest(g, dt); if (g.gone) gone = true; }
   if (gone) S.guests = S.guests.filter((g) => !g.gone);
+  updateCrew(dt);
 
   secAcc += dt;
   if (secAcc >= 1) { secAcc -= 1; if (secAcc > 1) secAcc = 0; everySecond(); }

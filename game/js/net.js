@@ -11,7 +11,7 @@ export const MAX_PLAYERS = 4;
 export const COLORS = ['#ff9f1c', '#3b8ed0', '#ef476f', '#9b5de5'];
 const CODE_CH = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 // things that happen in the host's game that the others should hear about too
-const SHARE = new Set(['goal', 'star', 'research', 'ach', 'month', 'year', 'event', 'eventend']);
+const SHARE = new Set(['goal', 'star', 'research', 'ach', 'month', 'year', 'event', 'eventend', 'broken', 'fixed', 'chdone', 'chfail', 'tip']);
 
 /** players: [{slot, name}]; cursors: slot -> {x, y}, the tile each of the others last pointed at. */
 export const room = { code: '', players: [], cursors: new Map(), joined: false };

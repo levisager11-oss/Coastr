@@ -91,8 +91,12 @@ export const SCENERY_ORDER = ['oak', 'birch', 'pine', 'snowpine', 'cherry', 'map
   'statue', 'windmill', 'gazebo', 'snowman'];
 export const SCN = Object.fromEntries(SCENERY.map((s, i) => (s ? [s.id, i] : ['none', 0])));
 
-// Coaster types. maxH = how many height levels above the station the track may climb.
+// Tracked rides. maxH = how many height levels above the station the track may climb.
 // launch = speed (m/s) the station fires the train out at; such a coaster has no lift chain.
+// look / carLook = which track and train drawing to use (the type's own when left out).
+// kind = 'flume' (boats in a water trough: flow is the speed the water carries them at) or 'train' (a park
+// railway: powered = its steady speed, and it may have more platforms, see isPlat). Without a kind it is a coaster.
+// maxTrains / trainGap = how many trains at most, and one for every so many metres of track.
 export const COASTERS = {
   mini: {
     maxH: 6, steep: false, loop: false, bank: false, cork: false, piece: 40, station: 300, cars: 4, cap: 8,
@@ -110,8 +114,26 @@ export const COASTERS = {
     maxH: 26, steep: true, loop: true, bank: true, cork: true, piece: 110, station: 1100, cars: 5, cap: 20,
     mu: 0.011, rail: '#2ec4b6', tie: '#1f8f85', sup: '#e9edf3', car: '#ff70a6', run: 130, launch: 23,
   },
+  hyper: {
+    maxH: 34, steep: true, loop: false, bank: true, cork: false, piece: 120, station: 1300, cars: 6, cap: 24,
+    mu: 0.009, rail: '#f78c1f', tie: '#c96a0a', sup: '#eef1f6', car: '#3b3f8f', run: 150, look: 'launch', carLook: 'steel',
+  },
+  flume: {
+    kind: 'flume', maxH: 8, steep: true, loop: false, bank: false, cork: false, piece: 55, station: 600, cars: 2, cap: 4,
+    mu: 0.03, flow: 3.2, rail: '#9a6a3c', tie: '#4fb8ee', sup: '#d9b383', car: '#a5713f', run: 60,
+    noBoost: true, noBrake: true, maxTrains: 6, trainGap: 28,
+  },
+  train: {
+    kind: 'train', maxH: 4, steep: false, loop: false, bank: false, cork: false, piece: 30, station: 500, cars: 4, cap: 12,
+    mu: 0.02, powered: 4.5, rail: '#b4bcc9', tie: '#8a5a35', sup: '#b9b2a6', car: '#d63a5f', run: 50,
+    noChain: true, noBoost: true, noBrake: true, maxTrains: 3, trainGap: 90,
+  },
 };
-export const COASTER_ORDER = ['mini', 'wood', 'steel', 'launch'];
+export const COASTER_ORDER = ['mini', 'wood', 'steel', 'launch', 'hyper', 'flume', 'train'];
+/** A real coaster (not a water ride or the railway)? Only those count for coaster goals and achievements. */
+export const isCoaster = (ctype) => !COASTERS[ctype].kind;
+/** A piece guests get on and off at: the station, or one of a railway's further platforms. */
+export const isPlat = (p) => p.t === 'station' || p.t === 'stop';
 // Ready-made coasters, written as design words (see pieceWord in coaster.js). e = excitement on flat
 // ground, w x h = the room they need when the station faces +x. All of them close on flat ground.
 export const DESIGNS = {
@@ -121,8 +143,10 @@ export const DESIGNS = {
   thunder: { ctype: 'wood', e: 6.6, w: 22, h: 4, words: 's2c s2c s2c s2c s2c s2c s0 s-2 s-2 s-2 s-2 s-2 s2 s2 s2 s0 wr0 wr0 s-2 s-2 s-2 s1 s1 s1 s1 s-1 s-1 s-1 s1 s1 s-1 s-1 wr0 l0 s0 s0 s-1 r-1 r-1' },
   comet: { ctype: 'steel', e: 7.7, w: 20, h: 8, col: 1, words: 's1c s1c s1c s1c s1c s1c s1c s1c s1c s1c s0 wr0b wr0b s-2 s-2 s-2 s-2 s-2 s0 loop s1 s1 s-1 s-1 cork s1 s1 wr0b s-1 s-1 brake brake brake r0b s0 s0 r0b s0 s0 s0 l0b' },
   rocket: { ctype: 'launch', e: 8.5, w: 26, h: 4, words: 's0 s0 s2 s2 s2 s2 s2 s2 s0 s-2 s-2 s-2 s-2 s-2 s-2 s0 loop s1 s1 wr0b wr0b s-1 s-1 cork s1 s1 s-1 s-1 brake brake brake brake s0 s0 s0 s0 s0 s0 s0 s0 s0 s0 s0 r0b s0 s0 r0b' },
+  titan: { ctype: 'hyper', e: 9.6, w: 31, h: 4, words: 's2c s2c s2c s2c s2c s2c s2c s2c s2c s2c s0 s-2 s-2 s-2 s-2 s-2 s-2 s-2 s-2 s-2 s-2 s0 wr0b wr0b s2 s2 s2 s2 s2 s0 s-2 s-2 s-2 s-2 s1 s1 s1 s-1 s-1 s-1 s1 s1 s-1 s-1 s0 s-1 s-1 brake brake brake s0 wr0b wr0b s0 s0' },
+  falls: { ctype: 'flume', e: 5, w: 11, h: 7, words: 's1c s1c s1c s1c s0 r0 s0 s-2 s-2 s0 s0 r0 s0 s1c s1c s1c s0 s-1 s-1 s-1 s0 r0 s0 s0 s0 s0 s0 r0 s0' },
 };
-export const DESIGN_ORDER = ['hopper', 'twister', 'timber', 'thunder', 'comet', 'rocket'];
+export const DESIGN_ORDER = ['hopper', 'twister', 'timber', 'thunder', 'comet', 'rocket', 'titan', 'falls'];
 
 // Paint for a coaster: [rails, ties, train]. Index 0 means the type's own colours.
 export const TRACK_COLORS = [
@@ -134,10 +158,10 @@ export const TRACK_COLORS = [
 
 // Unlocked at the start of a career.
 export const START_UNLOCKS = [
-  'carousel', 'castle', 'teacups', 'burger', 'drinks', 'toilet', 'oak', 'bush', 'flowers', 'bench', 'mini',
+  'carousel', 'castle', 'teacups', 'burger', 'drinks', 'toilet', 'oak', 'bush', 'flowers', 'bench', 'mini', 'bin',
 ];
 
-// Research projects, in career order. unlocks = ids from the tables above (or 'booster').
+// Research projects, in career order. unlocks = ids from the tables above (or 'booster', or 'photo' for the on-ride photo).
 // Progress is "the first project with something still locked", so this list can be reordered and
 // extended without breaking saved parks.
 export const RESEARCH = [
@@ -145,24 +169,37 @@ export const RESEARCH = [
   { id: 'r_slide', unlocks: ['slide'], pts: 250 },
   { id: 'r_nature', unlocks: ['pine', 'palm', 'rock', 'hedge', 'cactus', 'snowpine'], pts: 200 },
   { id: 'r_ferris', unlocks: ['ferris'], pts: 300 },
+  { id: 'r_pizza', unlocks: ['pizza', 'popcorn'], pts: 250 },
   { id: 'r_wood', unlocks: ['wood'], pts: 450 },
   { id: 'r_maze', unlocks: ['maze'], pts: 250 },
+  { id: 'r_planes', unlocks: ['planes'], pts: 300 },
   { id: 'r_swing', unlocks: ['swing'], pts: 350 },
   { id: 'r_deco', unlocks: ['lamp', 'fountain', 'flag'], pts: 250 },
+  { id: 'r_train', unlocks: ['train'], pts: 400 },
   { id: 'r_gift', unlocks: ['gift', 'candy'], pts: 250 },
   { id: 'r_pirate', unlocks: ['pirate'], pts: 400 },
+  { id: 'r_garden', unlocks: ['birch', 'cherry', 'maple', 'tulips', 'planter', 'fence'], pts: 250 },
   { id: 'r_bumper', unlocks: ['bumper'], pts: 400 },
+  { id: 'r_flume', unlocks: ['flume'], pts: 500 },
   { id: 'r_tower', unlocks: ['tower'], pts: 400 },
+  { id: 'r_minigolf', unlocks: ['minigolf'], pts: 300 },
   { id: 'r_steel', unlocks: ['steel'], pts: 600 },
   { id: 'r_statue', unlocks: ['statue', 'topiary', 'picnic', 'torch', 'snowman'], pts: 200 },
+  { id: 'r_aid', unlocks: ['firstaid'], pts: 250 },
   { id: 'r_coffee', unlocks: ['coffee', 'hats'], pts: 300 },
+  { id: 'r_funhouse', unlocks: ['funhouse'], pts: 400 },
   { id: 'r_haunted', unlocks: ['haunted'], pts: 450 },
+  { id: 'r_photo', unlocks: ['photo'], pts: 300 },
   { id: 'r_octopus', unlocks: ['octopus'], pts: 450 },
   { id: 'r_booster', unlocks: ['booster'], pts: 350 },
+  { id: 'r_cinema', unlocks: ['cinema'], pts: 450 },
   { id: 'r_drop', unlocks: ['drop'], pts: 500 },
+  { id: 'r_charm', unlocks: ['clock', 'gazebo', 'windmill', 'mushroom', 'lantern'], pts: 300 },
   { id: 'r_tumbler', unlocks: ['tumbler'], pts: 500 },
   { id: 'r_launch', unlocks: ['launch'], pts: 600 },
+  { id: 'r_pendulum', unlocks: ['pendulum'], pts: 550 },
   { id: 'r_slingshot', unlocks: ['slingshot'], pts: 600 },
+  { id: 'r_hyper', unlocks: ['hyper'], pts: 700 },
 ];
 export const RESEARCH_LEVELS = [0, 100, 200, 400]; // cost and points per month
 
@@ -187,14 +224,14 @@ const MEADOW_GOALS = [
 export const SCENARIOS = {
   meadows: { theme: 'meadow', cash: 10000, need: 0, extra: [], goals: MEADOW_GOALS, stars: [3, 6, 10] },
   lake: {
-    theme: 'lagoon', cash: 12000, need: 0, extra: ['palm', 'pine', 'icecream'], stars: [2, 4, 6],
+    theme: 'lagoon', cash: 12000, need: 0, extra: ['palm', 'pine', 'icecream', 'flume'], stars: [2, 4, 6],
     goals: [
       { k: 'open', reward: 1500 }, { k: 'guests', n: 60, reward: 2500 }, { k: 'rides', n: 6, reward: 3000 },
       { k: 'coaster', n: 5, reward: 4000 }, { k: 'rating', n: 700, reward: 5000 }, { k: 'guests', n: 200, reward: 0 },
     ],
   },
   dunes: {
-    theme: 'desert', cash: 14000, need: 2, extra: ['cactus', 'palm', 'rock', 'wood', 'icecream'], stars: [2, 4, 6],
+    theme: 'desert', cash: 14000, need: 2, extra: ['cactus', 'palm', 'rock', 'wood', 'icecream', 'train'], stars: [2, 4, 6],
     goals: [
       { k: 'open', reward: 1500 }, { k: 'coaster', n: 4.5, reward: 3000 }, { k: 'coasters', n: 2, reward: 4000 },
       { k: 'speed', n: 90, reward: 5000 }, { k: 'guests', n: 220, reward: 6000 }, { k: 'value', n: 120000, reward: 0 },
@@ -232,6 +269,26 @@ export const ACHIEVEMENTS = [
   { id: 'stars-12', icon: '👑' },
   { id: 'twisted', icon: '🌪️' },
   { id: 'speed-100', icon: '💨' },
+  { id: 'splash', icon: '💦' },
+  { id: 'all-aboard', icon: '🚂' },
+  { id: 'giant', icon: '🏔️' },
+  { id: 'spotless', icon: '🧹' },
+  { id: 'challenger', icon: '🎯' },
+  { id: 'challenge-10', icon: '🏅' },
+];
+
+// Staff. wage = per month, max = how many of a kind a park can employ.
+// clean = sweeps up litter, mech = repairs rides that break down, fun = an entertainer who cheers up guests nearby.
+export const STAFF = { clean: { wage: 70, max: 8 }, mech: { wage: 110, max: 6 }, fun: { wage: 90, max: 6 } };
+export const STAFF_ORDER = ['clean', 'mech', 'fun'];
+
+// Challenges: optional tasks with a time limit (in months) and a reward. need = something that must be
+// unlocked for the challenge to be offered. What each kind asks for is worked out in sim.js (challengeFor).
+export const CHALLENGES = [
+  { k: 'guests', months: 4 }, { k: 'rating', months: 4 }, { k: 'happy', months: 4 }, { k: 'clean', months: 3 },
+  { k: 'stalls', months: 3 }, { k: 'scenery', months: 3 }, { k: 'rides', months: 5 }, { k: 'value', months: 6 },
+  { k: 'budget', months: 6, need: 'wood' }, { k: 'air', months: 6, need: 'wood' }, { k: 'fast', months: 6, need: 'steel' },
+  { k: 'flume', months: 6, need: 'flume' }, { k: 'rail', months: 5, need: 'train' },
 ];
 
 export const MONTHS = 12;

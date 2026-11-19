@@ -1,5 +1,5 @@
 // Coaster tracks and trains: how every piece, support, station and car is drawn.
-import { N, DX, DY, COASTERS, TRACK_COLORS } from './data.js';
+import { N, DX, DY, COASTERS, TRACK_COLORS, isPlat } from './data.js';
 import { S, idx } from './world.js';
 import { pieceSamples, exitDir, bankAt, corkAngle } from './coaster.js';
 import { isoX, isoY, heff, shade, mix } from './iso.js';
@@ -11,8 +11,10 @@ const TAU = Math.PI * 2;
 const INK = '#2b2140';
 const INKA = 'rgba(40,28,64,0.5)';
 const ZO = 0.6; // metres from the centre line of a piece up to its rails
-const GAUGE = { mini: 0.54, wood: 0.66, steel: 0.64, launch: 0.64 }; // half the distance between the rails, metres
-const SPINE = { mini: -0.14, wood: -0.2, steel: -0.44, launch: -0.62 }; // where the structure under the rails sits
+// Each type of tracked ride is drawn in one of six looks (its own, or the one named in COASTERS[type].look).
+const GAUGE = { mini: 0.54, wood: 0.66, steel: 0.64, launch: 0.64, flume: 0.66, train: 0.5 }; // half the distance between the rails, metres
+const SPINE = { mini: -0.14, wood: -0.2, steel: -0.44, launch: -0.62, flume: -0.3, train: -0.14 }; // where the structure under the rails sits
+const lookOf = (c) => COASTERS[c.ctype].look || c.ctype;
 
 const styles = new Map();
 /** Colours of a coaster: its type's own, or the paint the player picked, with the shades made from them. */
@@ -21,7 +23,8 @@ function styleOf(c) {
   let st = styles.get(key);
   if (!st) {
     const T = COASTERS[c.ctype], pal = TRACK_COLORS[c.col | 0];
-    st = pal ? { ...T, rail: pal[0], tie: pal[1], car: pal[2] } : { ...T };
+    // paint: a flume keeps its water and a railway its sleepers and rails
+    st = !pal ? { ...T } : T.kind === 'flume' ? { ...T, rail: pal[0], car: pal[2] } : T.kind === 'train' ? { ...T, car: pal[0] } : { ...T, rail: pal[0], tie: pal[1], car: pal[2] };
     const ink = (col, k) => mix(shade(col, -0.45), INK, k);
     st.railHi = shade(st.rail, 0.5); st.railInk = ink(st.rail, 0.55);
     st.tieHi = shade(st.tie, 0.4); st.tieLo = shade(st.tie, -0.24); st.tieInk = ink(st.tie, 0.6);
@@ -164,12 +167,12 @@ function geoFresh(g) {
 }
 
 function buildGeo(c, pi) {
-  const p = c.pieces[pi], sm = pieceSamples(c, pi), T = styleOf(c), type = c.ctype;
+  const p = c.pieces[pi], sm = pieceSamples(c, pi), T = styleOf(c), type = lookOf(c);
   const seen = new Map();
   const busy = (xt, yt) => { const i = idx(clampN(xt), clampN(yt)), v = busyAt(i); seen.set(i, v); return v; };
   const n = sm.length, last = n - 1, d = p.d, ed = exitDir(p);
   const cork = p.t === 'cork', loop = p.t === 'loop', inv = loop || cork, wide = p.t === 'wl' || p.t === 'wr';
-  const station = p.t === 'station', W = GAUGE[type], SP = SPINE[type], wood = type === 'wood';
+  const station = isPlat(p), W = GAUGE[type], SP = SPINE[type], wood = type === 'wood', flume = type === 'flume', rail = type === 'train';
   const endOpen = !c.closed && pi === c.pieces.length - 1;
   const lnx = -DY[d], lny = DX[d]; // left of the direction of travel, on the map
 
@@ -331,7 +334,7 @@ function buildGeo(c, pi) {
         const x = gx(s.x, s.y), y = gy(s.x, s.y, g + 0.02);
         if (pen) { q.lineTo(x, y); any = true; } else { q.moveTo(x, y); pen = true; }
       }
-      if (any) add(q, null, 'rgba(20,35,45,0.15)', wood ? 12 : 9, 1, 'butt'); // flat ends: the parts of a piece meet without darker overlaps
+      if (any) add(q, null, 'rgba(20,35,45,0.15)', wood || flume ? 12 : 9, 1, 'butt'); // flat ends: the parts of a piece meet without darker overlaps
     }
     if (back) back(L, k0, k1);
     if (!station && !inv) {
@@ -355,6 +358,29 @@ function buildGeo(c, pi) {
       add(side, null, T.tieInk, 2.6, 0, 'butt');
       add(bed, T.tieLo);
       add(planks, null, T.tie, 2.5, 0, 'butt');
+    } else if (flume) {
+      // a trough of water between two wooden walls
+      const bw = W - 0.04, bu = -0.16;
+      const bed = new BPath(), side = new BPath(), foam = new BPath();
+      run(bed, bw, bu, k0, k1);
+      for (let k = k1; k >= k0; k--) { P(k, -bw, bu); bed.lineTo(qx, qy); }
+      bed.closePath();
+      run(side, W, 0, k0, k1, 0, 3); run(side, -W, 0, k0, k1, 0, 3);
+      for (let k = k0; k < k1; k++) seg(foam, k + 0.15, k & 1 ? 0.24 : -0.2, bu, k + 0.7, k & 1 ? 0.24 : -0.2, bu);
+      add(side, null, T.railInk, 4.2, 0, 'butt');
+      add(bed, station ? shade(T.tie, 0.12) : T.tie);
+      add(foam, null, 'rgba(255,255,255,0.6)', 1.3, 1);
+    } else if (rail) {
+      // a bed of gravel with wooden sleepers across it
+      const bw = W + 0.34, bu = SP - 0.04;
+      const bed = new BPath(), side = new BPath(), ties = new BPath();
+      run(bed, bw, bu, k0, k1);
+      for (let k = k1; k >= k0; k--) { P(k, -bw, bu); bed.lineTo(qx, qy); }
+      bed.closePath();
+      run(side, bw, bu, k0, k1, 0, 1.8); run(side, -bw, bu, k0, k1, 0, 1.8);
+      for (let k = k0; k <= k1; k++) if (own(k)) seg(ties, k, W + 0.2, SP, k, -W - 0.2, SP);
+      if (!station) { add(side, null, T.supLo, 2.4, 0, 'butt'); add(bed, T.sup); }
+      add(ties, null, T.tie, 2.4, 0, 'butt');
     } else if (type === 'mini') {
       const ink = rails(0, 0), ties = new BPath();
       for (let k = k0; k <= k1; k += 1) if (k % 2 === 0 && own(k)) { seg(ties, k, W + 0.1, SP, k, -W - 0.1, SP); seg(ink, k, W + 0.1, SP, k, -W - 0.1, SP); }
@@ -390,7 +416,7 @@ function buildGeo(c, pi) {
       for (let k = k0; k < k1; k++) for (const j of [0.08, 0.58]) seg(links, k + j, 0, cu, k + j + 0.3, 0, cu);
       add(trough, null, '#3a3e4f', 3.6, 0, 'butt');
       add(links, null, '#dfe4ec', 1.5, 1, 'butt');
-      if (!wood) {
+      if (!wood && !flume) {
         // a stair with a handrail on the far side of the lift
         const sd = F[3] + F[4] > 0 ? -1 : 1, steps = new BPath(), rail = new BPath();
         const b0 = sd * (W + 0.2), b1 = sd * (W + 0.62);
@@ -400,7 +426,18 @@ function buildGeo(c, pi) {
         add(steps, null, '#c9cfdb', 2.2, 1, 'butt');
         add(rail, null, '#646b82', 1.1, 1, 'butt');
       }
-    } else if (p.t === 'brake' || p.t === 'boost' || (type === 'launch' && (pi === 3 || pi === 4) && !inv && c.pieces[0].t === 'station')) {
+    } else if (p.t === 'photo') {
+      // a camera on a post beside the track, looking at the riders, and a striped mark between the rails
+      const mark = new BPath(), post = new BPath(), cam = new BPath(), lens = new BPath(), m = last / 2;
+      const sd = F[3] + F[4] > 0 ? -1 : 1, b = sd * (W + 0.7);
+      for (let j = -2; j <= 2; j++) seg(mark, m + j * 0.5 - 0.12, 0, cu, m + j * 0.5 + 0.12, 0, cu);
+      seg(post, m + 1, b, SP - 0.3, m + 1, b, 1.5);
+      P(m + 1, b, 1.72);
+      cam.rect(qx - 3.6, qy - 2.6, 7.2, 5.2); lens.arc(qx - sd * 1.2, qy + 0.2, 1.5, 0, TAU);
+      add(mark, null, '#ffd23f', 3.4, 0, 'butt');
+      add(post, null, '#5d6379', 2);
+      add(cam, '#2b2d42', INKA, 1); add(lens, '#bfe6ff');
+    } else if (p.t === 'brake' || p.t === 'boost' || (T.launch && (pi === 3 || pi === 4) && !inv && c.pieces[0].t === 'station')) {
       const house = new BPath();
       run(house, 0, cu, k0, k1);
       add(house, null, '#3a3e4f', 6.6, 0, 'butt');
@@ -427,11 +464,11 @@ function buildGeo(c, pi) {
       }
     }
 
-    // the rails: a dark outline, the colour, and a thin highlight
+    // the rails (on a flume the walls of the trough): a dark outline, the colour, and a thin highlight
     const r = rails(0, 0);
-    if (type !== 'mini') add(r, null, T.railInk, wood ? 4.6 : 4.8, 0, 'butt');
-    add(r, null, T.rail, type === 'mini' ? 2.6 : wood ? 3 : 3.2);
-    add(rails(-0.5, -0.8), null, T.railHi, type === 'mini' ? 0.9 : 1.1, 1);
+    if (type !== 'mini') add(r, null, T.railInk, flume ? 5.4 : rail ? 3.6 : wood ? 4.6 : 4.8, 0, 'butt');
+    add(r, null, T.rail, type === 'mini' ? 2.6 : flume ? 3.8 : rail ? 2.1 : wood ? 3 : 3.2);
+    add(rails(-0.5, -0.8), null, T.railHi, type === 'mini' || rail ? 0.9 : 1.1, 1);
 
     if (wood && !station) {
       // handrails along the side that is further from the viewer
@@ -557,12 +594,15 @@ function stationParts(c, p, pi, T, base, roof) {
   const poly = (q, ...v) => { q.moveTo(X(v[0], v[1]), Y(v[0], v[1], v[2])); for (let i = 3; i < v.length; i += 3) q.lineTo(X(v[i], v[i + 1]), Y(v[i], v[i + 1], v[i + 2])); q.closePath(); return q; };
   const line = (q, ...v) => { q.moveTo(X(v[0], v[1]), Y(v[0], v[1], v[2])); for (let i = 3; i < v.length; i += 3) q.lineTo(X(v[i], v[i + 1]), Y(v[i], v[i + 1], v[i + 2])); return q; };
   const g = heff(idx(p.x, p.y)), mid = '#b9bfcc', dark = '#9da5b5';
-  const lo = p.d < 2 ? pi === 0 : pi === 2, hi = p.d < 2 ? pi === 2 : pi === 0; // the ends of the station
+  // the ends of the platform: the station is pieces 0 to 2, a railway's further platforms are as long as they were built
+  const np = c.pieces.length, pv = c.pieces[(pi - 1 + np) % np], nx2 = c.pieces[(pi + 1) % np];
+  const first = p.t === 'station' ? pi === 0 : !pv || pv.t !== 'stop', end = p.t === 'station' ? pi === 2 : !nx2 || nx2.t !== 'stop';
+  const lo = p.d < 2 ? first : end, hi = p.d < 2 ? end : first;
   // platform
   base.push(layer(poly(new BPath(), -0.5, 0.5, zt, 0.5, 0.5, zt, 0.5, 0.5, g, -0.5, 0.5, g), ax ? mid : dark));
   base.push(layer(poly(new BPath(), 0.5, -0.5, zt, 0.5, 0.5, zt, 0.5, 0.5, g, 0.5, -0.5, g), ax ? dark : mid));
   base.push(layer(poly(new BPath(), -0.5, -0.5, zt, 0.5, -0.5, zt, 0.5, 0.5, zt, -0.5, 0.5, zt), '#e9ecf2'));
-  base.push(layer(poly(new BPath(), -0.5, -0.29, zt, 0.5, -0.29, zt, 0.5, 0.29, zt, -0.5, 0.29, zt), '#a9b0c0'));
+  base.push(layer(poly(new BPath(), -0.5, -0.29, zt, 0.5, -0.29, zt, 0.5, 0.29, zt, -0.5, 0.29, zt), T.kind === 'flume' ? shade(T.tie, -0.12) : '#a9b0c0'));
   base.push(layer(line(new BPath(), -0.5, -0.28, zt, 0.5, -0.28, zt), null, '#858da2', 1.8, 1, 'butt'));
   const safe = new BPath();
   line(safe, -0.5, 0.35, zt, 0.5, 0.35, zt); line(safe, -0.5, -0.35, zt, 0.5, -0.35, zt);
@@ -678,6 +718,23 @@ const CARS = {
     wheels: [0.74, 0.74, 0.1, 1.8], bogie: 1, stripe: [0.3, 0.38], seatCol: '#3a3f55', seatLo: '#2b2f42', bar: 2, barCol: '#f4f6fa', fin: 1,
   },
 };
+// a log boat: two halves that meet in the middle, no wheels, sitting a little down in the water
+CARS.flume = {
+  hw: 0.5, top: 0.44, seat: -0.2, back: 0.34, well: [-1.1, 1.1], wellF: [-1.1, 0.8], boat: 1,
+  mid: [-1.3, -0.22, 1.3, -0.22, 1.3, 0.44, -1.3, 0.44],
+  front: [-1.3, -0.22, 1.1, -0.22, 1.42, -0.04, 1.5, 0.22, 1.36, 0.46, -1.3, 0.44],
+  rear: [-1.1, -0.22, 1.3, -0.22, 1.3, 0.44, -1.34, 0.46, -1.48, 0.22, -1.4, -0.04],
+  stripe: [0.14, 0.24], seatCol: '#c99b5f', seatLo: '#8a5a35', bar: -1,
+};
+// a little steam engine in front, open carriages with a roof behind
+CARS.train = {
+  hw: 0.54, top: 0.66, seat: -0.2, back: 0.5, well: [-0.86, 0.8], wellF: [-0.86, 0.8], loco: 1, roof: 1.62,
+  mid: [-1.04, 0.2, 1.04, 0.2, 1.08, 0.32, 1.08, 0.58, 0.98, 0.66, -0.98, 0.66, -1.08, 0.58, -1.08, 0.32],
+  front: [-1.1, 0.2, 1.1, 0.2, 1.22, 0.36, 1.22, 0.86, 1.08, 1.02, -0.16, 1.02, -0.16, 1.5, -1.1, 1.5],
+  rear: [-1.04, 0.2, 1.04, 0.2, 1.08, 0.32, 1.08, 0.58, 0.98, 0.66, -0.98, 0.66, -1.08, 0.58, -1.08, 0.32],
+  chassis: [-0.92, 0.02, 0.92, 0.02, 0.92, 0.22, -0.92, 0.22], cw: 0.44,
+  wheels: [0.66, 0.5, 0.08, 1.8], stripe: [0.36, 0.48], seatCol: '#f7e6c4', seatLo: '#c9ad7c', bar: -1,
+};
 const UNDER = ['#1f1b2c', '#2a2536', '#2a2536', '#343044', '#3d394f'];
 const HAIR = ['#3b2a1a', '#6b4423', '#d9a441', '#1b1b1b', '#b5451b'];
 const SKIN = ['#ffd9b3', '#f1c27d', '#c68a5b'];
@@ -745,7 +802,7 @@ function drawRider(ctx, car, M, k, vf) {
 }
 
 export function drawCar(ctx, c, car) {
-  const T = styleOf(c), M = CARS[c.ctype];
+  const T = styleOf(c), M = CARS[COASTERS[c.ctype].carLook || c.ctype], loco = M.loco && car.first;
   // metric frame: f = forward, s = sideways, u = up out of the seats
   let fx = car.tx * 4, fy = car.ty * 4, fz = car.tz * 2;
   const fl = Math.hypot(fx, fy, fz) || 1;
@@ -766,7 +823,7 @@ export function drawCar(ctx, c, car) {
   if (!fine) {
     // from far away: the body and two dots for heads
     prism(ctx, pr, taper, hw, T.carPal, null, vf, vs, vu, lf, ls, lu);
-    if (up) for (let k = 0; k < Math.min(2, car.riders); k++) {
+    if (up && !loco) for (let k = 0; k < Math.min(2, car.riders); k++) {
       const b = k ? 0.28 : -0.28;
       ctx.fillStyle = SKIN[(car.j * 2 + k) % 3];
       ctx.beginPath(); ctx.arc(OX + M.seat * FX + b * SX + (top + 0.5) * UX, OY + M.seat * FY + b * SY + (top + 0.5) * UY, 2.6, 0, TAU); ctx.fill();
@@ -786,7 +843,8 @@ export function drawCar(ctx, c, car) {
     };
     if (vf > 0) seats();
     for (let q = 0; q < 2; q++) { const k = q ? 1 - farFirst : farFirst; if (k < riders) drawRider(ctx, car, M, k, vf); }
-    if (M.bar === 2) {
+    if (M.bar < 0) { /* nothing to hold on to but the sides */ }
+    else if (M.bar === 2) {
       // bars over the shoulders
       const a = M.seat;
       ctx.beginPath();
@@ -817,15 +875,52 @@ export function drawCar(ctx, c, car) {
     }
   };
 
-  if (up) running(); else people();
-  if (up) prism(ctx, M.chassis, null, M.cw, UNDER, T.carInk, vf, vs, vu, lf, ls, lu);
-  prism(ctx, pr, taper, hw, T.carPal, T.carInk, vf, vs, vu, lf, ls, lu);
-  if (!up) { prism(ctx, M.chassis, null, M.cw, UNDER, null, vf, vs, vu, lf, ls, lu); running(); }
+  if (M.boat) {
+    // spray round a boat that has just come down a drop
+    if (car.wet > 0) {
+      ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.beginPath();
+      for (let k = 0; k < 9; k++) {
+        const ph = (car.time * 3.1 + k * 0.37 + car.j * 0.5) % 1, sd = k & 1 ? 1 : -1;
+        const a = (car.first ? 1.3 : 0.2) - ph * 1.6 + (k % 3) * 0.2, b = sd * (0.56 + ph * 0.9), u = 0.1 + Math.sin(ph * Math.PI) * (0.7 + (k % 4) * 0.25) * car.wet;
+        const x = OX + a * FX + b * SX + u * UX, y = OY + a * FY + b * SY + u * UY, r = (1 - ph) * 2.6 * car.wet + 0.5;
+        ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, TAU);
+      }
+      ctx.fill();
+    }
+    prism(ctx, pr, taper, hw, T.carPal, T.carInk, vf, vs, vu, lf, ls, lu);
+  } else {
+    if (up) running(); else if (!loco) people();
+    if (up) prism(ctx, M.chassis, null, M.cw, UNDER, T.carInk, vf, vs, vu, lf, ls, lu);
+    prism(ctx, pr, taper, hw, T.carPal, T.carInk, vf, vs, vu, lf, ls, lu);
+    if (!up) { prism(ctx, M.chassis, null, M.cw, UNDER, null, vf, vs, vu, lf, ls, lu); running(); }
+  }
+  if (loco) {
+    // the engine: a funnel with a puff of steam, a dome, a lamp at the front and a window in the cab
+    const at = (a, b, u) => [OX + a * FX + b * SX + u * UX, OY + a * FY + b * SY + u * UY];
+    ctx.strokeStyle = '#2b2d42'; ctx.lineWidth = 3.4; ctx.lineCap = 'butt';
+    ctx.beginPath(); mv(ctx, 0.78, 0, 1.0); ln(ctx, 0.78, 0, 1.52); ctx.stroke();
+    ctx.lineWidth = 5; ctx.beginPath(); mv(ctx, 0.78, 0, 1.5); ln(ctx, 0.78, 0, 1.66); ctx.stroke();
+    ctx.lineCap = 'round';
+    const dome = at(0.2, 0, 1.08);
+    ctx.fillStyle = '#ffd23f'; ctx.beginPath(); ctx.arc(dome[0], dome[1], 2.3, 0, TAU); ctx.fill();
+    if (vf > -0.2) { const l = at(1.2, 0, 0.74); ctx.fillStyle = '#fff6c8'; ctx.beginPath(); ctx.arc(l[0], l[1], 1.7, 0, TAU); ctx.fill(); }
+    ctx.fillStyle = '#bfe6ff'; ctx.beginPath(); quad(ctx, -0.92, nearB, 1.0, -0.36, nearB, 1.0, -0.36, nearB, 1.36, -0.92, nearB, 1.36); ctx.fill();
+    ctx.fillStyle = T.carHi; ctx.beginPath(); quad(ctx, -1.14, hw + 0.06, 1.5, -0.12, hw + 0.06, 1.5, -0.12, -hw - 0.06, 1.5, -1.14, -hw - 0.06, 1.5); ctx.fill();
+    if (car.v > 0.5) {
+      ctx.fillStyle = 'rgba(255,255,255,0.75)';
+      for (let k = 0; k < 3; k++) {
+        const ph = (car.time * 0.9 + k / 3) % 1, q = at(0.78 - ph * 1.2, 0, 1.8 + ph * 1.5);
+        const ga = ctx.globalAlpha;
+        ctx.globalAlpha = ga * (1 - ph); ctx.beginPath(); ctx.arc(q[0], q[1], 1.6 + ph * 3, 0, TAU); ctx.fill(); ctx.globalAlpha = ga;
+      }
+    }
+    return;
+  }
   // a lighter stripe along the side that is seen
-  const sa0 = pr[pr.length - 2] + 0.1, sa1 = car.first ? pr[4] - 0.14 : pr[4] - 0.08;
+  const sa0 = (M.boat ? -1.2 : pr[pr.length - 2]) + 0.1, sa1 = M.boat ? 1.1 : car.first ? pr[4] - 0.14 : pr[4] - 0.08;
   ctx.fillStyle = T.carHi;
   ctx.beginPath(); quad(ctx, sa0, nearB, M.stripe[0], sa1, nearB * (taper ? 0.7 : 1), M.stripe[0], sa1, nearB * (taper ? 0.7 : 1), M.stripe[1], sa0, nearB, M.stripe[1]); ctx.fill();
-  if (car.last && vf < 0) {
+  if (car.last && vf < 0 && !M.boat) {
     // tail lights
     const a = pr[pr.length - 2] - 0.01, u = 0.5 * (pr[pr.length - 1] + pr[pr.length - 3]);
     ctx.fillStyle = '#ff5964'; ctx.beginPath();
@@ -860,6 +955,18 @@ export function drawCar(ctx, c, car) {
     ctx.fill();
   }
   people();
+  if (M.roof) {
+    // a carriage roof on four posts
+    const r = M.roof;
+    ctx.strokeStyle = T.carInk; ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    for (const a of [-0.96, 0.96]) for (const b of [-hw + 0.04, hw - 0.04]) { mv(ctx, a, b, top); ln(ctx, a, b, r); }
+    ctx.stroke();
+    ctx.beginPath(); quad(ctx, -1.14, -hw - 0.1, r, 1.14, -hw - 0.1, r, 1.14, hw + 0.1, r, -1.14, hw + 0.1, r);
+    ctx.fillStyle = '#fff6e6'; ctx.fill(); ctx.strokeStyle = T.carInk; ctx.lineWidth = 1; ctx.stroke();
+    ctx.beginPath(); quad(ctx, -1.14, -0.16, r + 0.02, 1.14, -0.16, r + 0.02, 1.14, 0.16, r + 0.02, -1.14, 0.16, r + 0.02);
+    ctx.fillStyle = T.car; ctx.fill();
+  }
   if (M.fin && car.last) {
     // tail fin
     ctx.beginPath(); mv(ctx, -0.5, 0, top + 0.04); ln(ctx, -1.22, 0, top + 0.66); ln(ctx, -1.12, 0, top - 0.04); ctx.closePath();

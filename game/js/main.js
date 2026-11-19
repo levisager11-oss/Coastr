@@ -4,7 +4,7 @@ import { tick, initAfterLoad } from './sim.js';
 import { render, cam, view, look, isoX, isoY, toScreen, mapThumb } from './render.js';
 import {
   ui, initUI, resetUI, buildHUD, refreshHUD, handleEvents, moveCamera, centerOn, toast, dialog, showHelp, updateTestHud, closePanel,
-  starsHTML, updateSounds, closeDialog, refreshRoom, openPanel,
+  starsHTML, updateSounds, closeDialog, refreshRoom, openPanel, setPhoto,
 } from './ui.js';
 import { room, hostRoom, joinRoom, leaveRoom, netTick, shareEvents, setNetHooks, cleanCode, renameMe } from './net.js';
 import { SCENARIOS, SCENARIO_ORDER, DAY_LEN, MONTH_DAYS } from './data.js';
@@ -134,7 +134,7 @@ function copyPark(key) {
   if (!d) return;
   d.name = t('park_copy_name', nameOf(d)).slice(0, 30);
   d.at = Date.now();
-  d.sentValue = 0; d.sentGuests = 0;
+  d.sentValue = 0; d.sentGuests = 0; d.sentCh = 0;
   // (the menu has no toasts: the new park simply shows up at the top of the list)
   if (!store(newKey(), d)) dialog(`<p>${esc(t('save_fail'))}</p>`, [{ label: t('ok'), cls: 'yellow', value: 1 }]);
   parkCache = null;
@@ -174,6 +174,8 @@ function sendScores() {
     const v = parkValue();
     if (v > (S.sentValue || 0)) { window.toki.score(v); S.sentValue = v; }
     if (S.peakGuests > (S.sentGuests || 0)) { window.toki.score(S.peakGuests, 'guests'); S.sentGuests = S.peakGuests; }
+    const won = S.ch ? S.ch.total | 0 : 0;
+    if (won > (S.sentCh || 0)) { window.toki.score(won, 'challenges'); S.sentCh = won; }
   } catch (e) { /* scores are a bonus; never break the game over them */ }
 }
 function achievement(id) {
@@ -282,9 +284,115 @@ function buildParks() {
   }).join('');
   menuEl.innerHTML = `<div class="m-card m-parks"><div class="m-ph"><button class="btn icon" data-m="back" aria-label="${esc(t('b_back'))}">${icon('back')}</button>
     <h2>${t('m_parks')}</h2><span>${t('m_parks_n', all.length, MAX_PARKS)}</span></div>
-    <div class="m-plist">${rows || `<p class="m-none">${esc(t('parks_none'))}</p>`}</div></div>`;
+    <div class="m-plist">${rows || `<p class="m-none">${esc(t('parks_none'))}</p>`}</div>
+    <div class="m-row m-import"><button class="btn" data-m="import">${icon('load')}${esc(t('import_park'))}</button></div></div>`;
   for (const el of menuEl.querySelectorAll('[data-pt]')) { const p = all[+el.dataset.pt]; if (p) el.appendChild(parkThumb(p)); }
 }
+// ---------- sharing a park as a code ----------
+// A park is its save, packed small and written as letters and digits: easy to copy into a message.
+// A park loaded from a code is always a sandbox park, so it brings no scores, stars or achievements.
+const CODE = 'COASTR1';
+function b64(bytes) {
+  let str = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) str += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function unb64(str) {
+  const bin = atob(str.replace(/-/g, '+').replace(/_/g, '/')), out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+async function pipe(bytes, stream) {
+  return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer());
+}
+async function parkCode(d) {
+  const raw = new TextEncoder().encode(JSON.stringify(d));
+  try {
+    if (typeof CompressionStream !== 'undefined') return CODE + 'z' + b64(await pipe(raw, new CompressionStream('deflate-raw')));
+  } catch (e) { /* an old browser: the code is longer, but works the same */ }
+  return CODE + 'j' + b64(raw);
+}
+async function readCode(text) {
+  const str = String(text || '').replace(/\s+/g, ''), i = str.indexOf(CODE);
+  if (i < 0) return null;
+  try {
+    const kind = str[i + CODE.length], bytes = unb64(str.slice(i + CODE.length + 1).replace(/[^A-Za-z0-9_-]/g, ''));
+    const raw = kind === 'z' ? await pipe(bytes, new DecompressionStream('deflate-raw')) : bytes;
+    const d = JSON.parse(new TextDecoder().decode(raw));
+    return d && d.v === 2 && typeof d.h === 'string' && typeof d.path === 'string' && Array.isArray(d.objs) ? d : null;
+  } catch (e) { return null; }
+}
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* not allowed here: try the old way */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch (e) { return false; }
+}
+/** Show the park being played as a code to copy. */
+async function sharePark() {
+  if (!playing) return;
+  const d = serialize();
+  // what goes out is the park itself, not this player's scores and achievements
+  d.at = Date.now(); d.sentValue = 0; d.sentGuests = 0; d.sentCh = 0; d.ach = {};
+  if (!d.name) d.name = t('sc_' + S.sc);
+  const code = await parkCode(d);
+  const p = dialog(`<h2>${esc(t('share_park'))}</h2><p>${esc(t('share_how'))}</p><textarea class="code-box" readonly rows="4" spellcheck="false">${esc(code)}</textarea>`,
+    [{ label: t('close'), value: 0 }, { label: t('b_copy'), cls: 'yellow', value: 1 }]);
+  const ta = document.querySelector('#modal .code-box');
+  if (ta) ta.addEventListener('focus', () => ta.select());
+  if ((await p) !== 1) return;
+  const ok = await copyText(code);
+  if (ok) toast(t('share_copied'), 'good');
+  else dialog(`<p>${esc(t('share_copy_fail'))}</p><textarea class="code-box" readonly rows="4" spellcheck="false">${esc(code)}</textarea>`, [{ label: t('ok'), cls: 'yellow', value: 1 }]);
+}
+/** Ask for a park code and add that park to the list as a sandbox park. */
+async function importPark() {
+  if (parksFull()) return;
+  const p = dialog(`<h2>${esc(t('import_park'))}</h2><p>${esc(t('import_q'))}</p><textarea class="code-box" rows="4" spellcheck="false" autocomplete="off" placeholder="${CODE}…"></textarea>`,
+    [{ label: t('b_cancel'), value: 0 }, { label: t('b_load'), cls: 'yellow', value: 1 }]);
+  const ta = document.querySelector('#modal .code-box');
+  if (ta) setTimeout(() => { try { ta.focus(); } catch (e) { /* ignore */ } }, 30);
+  if ((await p) !== 1) return;
+  const d = await readCode(ta ? ta.value : '');
+  if (!d) { dialog(`<p>${esc(t('import_bad'))}</p>`, [{ label: t('ok'), cls: 'yellow', value: 1 }]); return; }
+  d.mode = 'sandbox'; d.at = Date.now(); d.tut = 99;
+  d.name = t('import_name', String(d.name || t('sc_' + scOf(d))).slice(0, 20));
+  d.cash = 0; d.loan = 0; d.ach = {}; d.sentValue = 0; d.sentGuests = 0; d.sentCh = 0;
+  delete d.ch;
+  if (!store(newKey(), d)) dialog(`<p>${esc(t('save_fail'))}</p>`, [{ label: t('ok'), cls: 'yellow', value: 1 }]);
+  parkCache = null; menuView = 'parks'; buildMenu();
+}
+/** The picture on screen as a file to keep, with the park's name in the corner. */
+function snapPicture() {
+  const c = document.createElement('canvas');
+  c.width = canvas.width; c.height = canvas.height;
+  const g = c.getContext('2d'), k = canvas.width / Math.max(1, view.w);
+  g.drawImage(canvas, 0, 0);
+  const label = 'Coastr · ' + (S.name || t('sc_' + S.sc));
+  g.font = `800 ${13 * k}px ui-rounded, "Segoe UI", system-ui, sans-serif`;
+  const tw = g.measureText(label).width;
+  g.fillStyle = 'rgba(43,45,66,0.7)';
+  g.beginPath(); g.roundRect(10 * k, c.height - 36 * k, tw + 22 * k, 26 * k, 13 * k); g.fill();
+  g.fillStyle = '#fff'; g.textBaseline = 'middle'; g.fillText(label, 21 * k, c.height - 22.5 * k);
+  c.toBlob((blob) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    let file = null, canShare = false;
+    try { file = new File([blob], 'coastr-park.png', { type: 'image/png' }); canShare = !!(navigator.canShare && navigator.canShare({ files: [file] })); } catch (e) { canShare = false; }
+    dialog(`<h2>${esc(t('photo_title'))}</h2><img class="shot" src="${url}" alt=""><p class="small">${esc(t('photo_hint'))}</p>`,
+      [{ label: t('close'), value: 0 }, ...(canShare ? [{ label: t('b_share'), value: 2 }] : []), { label: t('photo_save'), cls: 'yellow', value: 1 }]).then(async (a) => {
+      if (a === 1) { const l = document.createElement('a'); l.href = url; l.download = 'coastr-park.png'; document.body.appendChild(l); l.click(); l.remove(); }
+      else if (a === 2) { try { await navigator.share({ files: [file], title: 'Coastr' }); } catch (e) { /* cancelled */ } }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    });
+  }, 'image/png');
+}
+
 /** Ask which map a new sandbox park should use. */
 function pickMap() {
   return dialog(`<h2>${t('m_sandbox')}</h2><p>${t('sandbox_map')}</p>`,
@@ -303,6 +411,7 @@ menuEl.addEventListener('click', async (e) => {
   else if (act === 'continue') { const p = lastPark(); if (p) startGame(p.d.mode, false, scOf(p.d), p.key); }
   else if (act === 'parks') { menuView = 'parks'; buildMenu(); menuEl.scrollTop = 0; }
   else if (act === 'back') { menuView = 'main'; buildMenu(); }
+  else if (act === 'import') importPark();
   else if (act === 'play' || act === 'ren' || act === 'cp' || act === 'del') {
     const p = parks()[+arg];
     if (!p) return;
@@ -366,6 +475,7 @@ function startGame(mode, fresh, sc = 'meadows', key = null, data = null) {
   saveGame(false);
 }
 function toMenu() {
+  setPhoto(false);
   if (net.on) { leaveRoom(); tokiRoom(null); refreshRoom(); }
   saveGame(false); sendScores(); noteStars();
   playing = false; curKey = null; menuView = 'main';
@@ -441,7 +551,7 @@ function joinedPark(m) {
   if (playing) { saveGame(false); playing = false; }
   startGame(d.mode, false, scOf(d), keep ? key : null, d);
   // scores and achievements are sent for this player's own copy
-  S.sentValue = prev ? prev.sentValue || 0 : 0; S.sentGuests = prev ? prev.sentGuests || 0 : 0;
+  S.sentValue = prev ? prev.sentValue || 0 : 0; S.sentGuests = prev ? prev.sentGuests || 0 : 0; S.sentCh = prev ? prev.sentCh || 0 : 0;
   S.speed = typeof m.speed === 'number' ? m.speed : 1;
   saveGame(false);
   if (!keep) toast(t('mp_nosave'), 'bad');
@@ -489,6 +599,8 @@ const hooks = {
   },
   async tomenu() { if (net.on && !(await askLeave())) return; if (playing) toMenu(); },
   together: shareRoom,
+  share: sharePark,
+  snap: snapPicture,
   async leave() {
     if (!net.on || !(await askLeave()) || !net.on) return;
     if (net.slot === 0) { leaveRoom(); tokiRoom(null); refreshRoom(); closePanel(); } else toMenu();

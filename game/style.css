@@ -560,3 +560,41 @@ table.fin .pos { color: #05805f; }
 @media (max-height: 600px) {
   #builder .b-graph { display: none; }
 }
+
+/* ---------- version 3: tabs, staff, challenges, photo mode, park codes ---------- */
+.tabs { display: flex; gap: 4px; padding: 8px 10px 0; }
+.tabs button { flex: 1 1 auto; min-width: 0; min-height: 36px; border-radius: 10px; background: #eef1f7; font-size: 12.5px; font-weight: 800; color: var(--soft); padding: 2px 6px; line-height: 1.1; white-space: nowrap; }
+.tabs button.on { background: var(--ink); color: #fff; }
+.staff { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #f3f5fa; border-radius: 12px; padding: 8px 8px 8px 12px; }
+.staff > div:first-child { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.staff span { font-size: 12px; color: var(--soft); font-weight: 600; }
+.staff em { font-style: normal; font-size: 12px; font-weight: 700; color: #05805f; }
+.staff .stepper { flex: none; }
+.staff .stepper b { min-width: 26px; }
+.staff .stepper button { background: #fff; }
+.task { background: #f3f5fa; border-radius: 12px; padding: 9px 11px; display: flex; flex-direction: column; gap: 7px; }
+.task.now { background: #fff6cf; }
+.task > b { font-size: 13.5px; white-space: normal; }
+.task .t-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 10px; font-size: 12px; font-weight: 700; color: var(--soft); }
+.task .t-foot em { font-style: normal; color: #05805f; }
+.task .btns .btn { min-height: 36px; }
+#photobar {
+  position: fixed; left: 50%; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 6;
+  display: flex; gap: 6px; background: rgba(255, 255, 255, 0.92); border-radius: 16px; padding: 6px; box-shadow: var(--shadow); pointer-events: auto; max-width: calc(100% - 16px);
+}
+#photobar .btn { display: flex; align-items: center; gap: 6px; min-height: 42px; white-space: nowrap; }
+#photobar .btn svg { width: 20px; height: 20px; flex: none; }
+#hud.photo > :not(#photobar) { display: none !important; }
+.dialog .code-box { font: 600 12px ui-monospace, Menlo, Consolas, monospace; padding: 8px 10px; border-radius: 10px; border: 2px solid #dfe3ec; background: #f6f7fb; color: var(--ink); width: 100%; resize: none; word-break: break-all; outline: none; -webkit-user-select: text; user-select: text; }
+.dialog .code-box:focus { border-color: var(--purple); background: #fff; }
+.dialog .shot { width: 100%; height: auto; max-height: 46vh; object-fit: contain; border-radius: 12px; background: #dfe7f1; -webkit-touch-callout: default; -webkit-user-select: auto; user-select: auto; }
+.dialog p.small { font-size: 12.5px; color: var(--soft); }
+@media (max-width: 400px) {
+  #photobar .btn[data-ph="light"] span { display: none; }
+}
+@media (max-height: 480px) and (max-width: 560px) {
+  .tabs { padding-top: 6px; }
+  .tabs button { min-height: 32px; font-size: 12px; }
+  #photobar { bottom: 6px; padding: 4px; }
+  #photobar .btn { min-height: 38px; }
+}
