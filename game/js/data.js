@@ -94,11 +94,11 @@ export const COASTER_ORDER = ['mini', 'wood', 'steel', 'launch'];
 // Ready-made coasters, written as design words (see pieceWord in coaster.js). e = excitement on flat
 // ground, w x h = the room they need when the station faces +x. All of them close on flat ground.
 export const DESIGNS = {
-  hopper: { ctype: 'mini', e: 3.5, w: 11, h: 9, words: 's1c s1c s1c s1c s0 wr0 s-1 s-1 s1 s-1 s-1 s0 r0 s1 s-1 s0 s0 s0 s0 s0 s0 s0 r0 s0 s0 s0 s0 s0 s0 s0 r-1' },
-  twister: { ctype: 'mini', e: 4.3, w: 14, h: 9, words: 's1c s1c s1c s1c s1c s1c s0 r0 s-1 s-1 l0 s-1 r0 s-1 s1 s-1 wr0 s-1 s0 wr0 s-1 brake s0 s0 s0 l0 s0 s0 s0 s0 s0 s0 s0 r0 r0' },
-  timber: { ctype: 'wood', e: 5.9, w: 21, h: 8, words: 's1c s1c s1c s1c s1c s1c s1c s1c s1c s0 wr0 wr0 s-2 s-2 s-2 s-2 s1 s1 s1 s1 s1 s-1 s-1 s-1 s-1 s1 s1 s-1 s-1 wr0 s1 s-1 s1 s-1 brake r0 s0 s0 s0 s0 r0 s0 s0 s-1 l-1' },
-  thunder: { ctype: 'wood', e: 6.7, w: 22, h: 4, words: 's2c s2c s2c s2c s2c s2c s0 s-2 s-2 s-2 s-2 s-2 s2 s2 s2 s0 wr0 wr0 s-2 s-2 s-2 s1 s1 s1 s1 s-1 s-1 s-1 s1 s1 s-1 s-1 wr0 l0 s0 s0 s-1 r-1 r-1' },
-  comet: { ctype: 'steel', e: 7.8, w: 20, h: 8, col: 1, words: 's1c s1c s1c s1c s1c s1c s1c s1c s1c s1c s0 wr0b wr0b s-2 s-2 s-2 s-2 s-2 s0 loop s1 s1 s-1 s-1 cork s1 s1 wr0b s-1 s-1 brake brake brake r0b s0 s0 r0b s0 s0 s0 l0b' },
+  hopper: { ctype: 'mini', e: 3.4, w: 11, h: 9, words: 's1c s1c s1c s1c s0 wr0 s-1 s-1 s1 s-1 s-1 s0 r0 s1 s-1 s0 s0 s0 s0 s0 s0 s0 r0 s0 s0 s0 s0 s0 s0 s0 r-1' },
+  twister: { ctype: 'mini', e: 4.2, w: 14, h: 9, words: 's1c s1c s1c s1c s1c s1c s0 r0 s-1 s-1 l0 s-1 r0 s-1 s1 s-1 wr0 s-1 s0 wr0 s-1 brake s0 s0 s0 l0 s0 s0 s0 s0 s0 s0 s0 r0 r0' },
+  timber: { ctype: 'wood', e: 6, w: 21, h: 8, words: 's1c s1c s1c s1c s1c s1c s1c s1c s1c s0 wr0 wr0 s-2 s-2 s-2 s-2 s1 s1 s1 s1 s1 s-1 s-1 s-1 s-1 s1 s1 s-1 s-1 wr0 s1 s-1 s1 s-1 brake r0 s0 s0 s0 s0 r0 s0 s0 s-1 l-1' },
+  thunder: { ctype: 'wood', e: 6.6, w: 22, h: 4, words: 's2c s2c s2c s2c s2c s2c s0 s-2 s-2 s-2 s-2 s-2 s2 s2 s2 s0 wr0 wr0 s-2 s-2 s-2 s1 s1 s1 s1 s-1 s-1 s-1 s1 s1 s-1 s-1 wr0 l0 s0 s0 s-1 r-1 r-1' },
+  comet: { ctype: 'steel', e: 7.7, w: 20, h: 8, col: 1, words: 's1c s1c s1c s1c s1c s1c s1c s1c s1c s1c s0 wr0b wr0b s-2 s-2 s-2 s-2 s-2 s0 loop s1 s1 s-1 s-1 cork s1 s1 wr0b s-1 s-1 brake brake brake r0b s0 s0 r0b s0 s0 s0 l0b' },
   rocket: { ctype: 'launch', e: 8.5, w: 26, h: 4, words: 's0 s0 s2 s2 s2 s2 s2 s2 s0 s-2 s-2 s-2 s-2 s-2 s-2 s0 loop s1 s1 wr0b wr0b s-1 s-1 cork s1 s1 s-1 s-1 brake brake brake brake s0 s0 s0 s0 s0 s0 s0 s0 s0 s0 s0 r0b s0 s0 r0b' },
 };
 export const DESIGN_ORDER = ['hopper', 'twister', 'timber', 'thunder', 'comet', 'rocket'];

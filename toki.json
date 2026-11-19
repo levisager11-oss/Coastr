@@ -6,14 +6,16 @@
   "controls": "Mouse: drag to move the map, scroll to zoom, click to build, drag to build a line of path or a whole area. Touch: drag to move, pinch to zoom, tap to build, then drag from the white dot to draw a line. Coasters: tap the arrows on the map, or use the arrow keys; tap a piece of track to change it. R turns a ride, Ctrl+Z takes back the last thing built, Esc cancels, Space pauses.",
   "category": "strategy",
   "engine": "HTML5 Canvas (plain JavaScript)",
-  "version": "2.2",
-  "update_title": "Play together with friends",
+  "version": "2.3",
+  "update_title": "Smoother coasters and a cleaner park",
   "notes": [
-    "Build one park together with up to three friends: tap the gear, then Play together, and share the four-letter room code",
-    "Friends join from the main menu with Join a friend, or straight from Toki's Invite friends",
-    "You see every player's name on the map where they are building, and who is in the park at the top",
-    "Works in the sandbox and in all four scenarios: goals, stars and achievements count for everyone in the park",
-    "When the park closes, every player keeps a copy in Your parks to carry on alone or share again later"
+    "Coaster tracks now curve smoothly into and out of every hill, drop and lift hill, with no sharp corners",
+    "Loops have a new teardrop shape, and trains no longer disappear while going through them",
+    "Trains lean and tip smoothly through bends, hills and loops instead of in little jerks",
+    "While you build a coaster, a side view shows the track's height and how fast the train goes",
+    "Rough spots on a coaster and places where the train would get stuck now show as big red dots",
+    "Many drawing fixes: guests no longer lose their heads in front of rides, posts no longer go through bridges, and icons, coastlines and the park entrance look cleaner",
+    "The goals button is back on the smallest phones"
   ],
   "cover_image": "cover.png",
   "screenshots": [

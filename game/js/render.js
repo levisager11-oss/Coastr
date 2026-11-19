@@ -6,7 +6,7 @@ import { guestPos, queueLine } from './guests.js';
 import { darkness } from './sim.js';
 import * as SP from './sprites.js';
 import { drawFxWorld, drawFxGlow, drawFxScreen, fxWet, fxSnow } from './fx.js';
-import { drawPiece, drawCar, stationRoof, setTrackDetail, coasterThumb, trackPictures } from './track.js';
+import { drawPiece, drawCar, stationRoof, setTrackDetail, coasterThumb, trackPictures, loopFarHalf } from './track.js';
 import { isoX, isoY, heff, shade, mix, rectPath } from './iso.js';
 import { room, COLORS, playerName } from './net.js';
 
@@ -294,11 +294,13 @@ const tp = {};
 const trains = []; // flat list for one coaster: time on track, riders, moving (1) or waiting (0)
 let fine = true; // zoomed in far enough for small details to be worth drawing
 const gp = {};
-let farGrad = null, farKey = '';
 const lights = [], emotes = [];
 let glowWarm = null, glowCool = null;
 const queueSpot = new Map();
 let queuePv = -1;
+// Cars in a loop, by coaster and piece: [cars on the way up, cars on the way down]. A loop is drawn in one
+// go at its front tile, so its cars are drawn there too, each half's after that half of the track.
+const loopCars = new Map();
 
 function addBucket(i, item) {
   let b = buckets.get(i);
@@ -316,14 +318,12 @@ function glowSprite(rgb) {
 }
 
 // The land or sea around the park, with little strokes that stay put as the camera moves.
-function drawBackdrop(ctx, TH, w, h, z, time, cx = cam.x, cy = cam.y) {
-  const key = S.theme + '|' + h;
-  if (!farGrad || farKey !== key) {
-    farGrad = ctx.createLinearGradient(0, 0, 0, h);
-    farGrad.addColorStop(0, TH.far[0]); farGrad.addColorStop(1, TH.far[1]);
-    farKey = key;
-  }
-  ctx.fillStyle = farGrad; ctx.fillRect(0, 0, w, h);
+// The land or sea around the park. It is fixed to the world and does not move, so the kept picture of
+// the ground and the backdrop drawn straight to the screen (while zooming) look exactly the same.
+function drawBackdrop(ctx, TH, w, h, z, cx = cam.x, cy = cam.y) {
+  const grad = ctx.createLinearGradient(0, (-300 - cy) * z + h / 2, 0, (N * 32 + 300 - cy) * z + h / 2);
+  grad.addColorStop(0, TH.far[0]); grad.addColorStop(1, TH.far[1]);
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, w, h);
   const step = 110 * Math.max(1, Math.ceil(0.55 / z));
   const x0 = Math.floor((cx - w / 2 / z) / step) - 1, x1 = Math.ceil((cx + w / 2 / z) / step);
   const y0 = Math.floor((cy - h / 2 / z) / (step / 2)) - 1, y1 = Math.ceil((cy + h / 2 / z) / (step / 2));
@@ -334,15 +334,62 @@ function drawBackdrop(ctx, TH, w, h, z, time, cx = cam.x, cy = cam.y) {
     if (hs > 0.62) continue;
     const wx = (gx + hash(gy, gx)) * step, wy = (gy + hs) * (step / 2);
     const px = (wx - cx) * z + w / 2, py = (wy - cy) * z + h / 2;
-    const len = (10 + hs * 26) * z * (TH.sea && time ? 0.6 + 0.4 * Math.sin(time * 0.9 + hs * 40) : 1);
+    const len = (10 + hs * 26) * z;
     if (TH.sea) { ctx.moveTo(px - len, py); ctx.lineTo(px + len, py); }
     else { ctx.moveTo(px - len, py + 2 * z); ctx.quadraticCurveTo(px, py - 3 * z, px + len, py + 2 * z); }
   }
   ctx.stroke();
 }
 
+// Rides bigger than one tile and coaster loops are not drawn when their front corner tile comes up, or
+// they would cover guests, scenery and track that stand just in front of their sides. Each is drawn
+// between two diagonals of tiles instead: after the last that holds something behind it, before the
+// first that holds something in front of it. Only beside the short end of a 3x1 ride is a tile in
+// front of it on that last diagonal: that tile waits and is drawn just after the ride.
+const lateAt = [], lateWait = new Map();
+let latePv = -1;
+function planLate() {
+  latePv = S.pv;
+  lateAt.length = 0; lateWait.clear();
+  const add = (d, e) => { (lateAt[d] || (lateAt[d] = [])).push(e); return e; };
+  for (const id in S.objs) {
+    const o = S.objs[id];
+    if (o.kind === 'ride' && (o.w > 1 || o.h > 1)) {
+      const d = o.x + o.y + Math.max(o.w, o.h) - 2, e = add(d, { o, held: [] });
+      const wait = (x, y) => { if (inB(x, y) && x + y <= d) lateWait.set(idx(x, y), e); };
+      for (let k = 0; k < o.w; k++) wait(o.x + k, o.y + o.h);
+      for (let k = 0; k < o.h; k++) wait(o.x + o.w, o.y + k);
+    } else if (o.kind === 'coaster') {
+      for (let pi = 0; pi < o.pieces.length; pi++) {
+        const p = o.pieces[pi];
+        if (p.t === 'loop') add(p.x + p.y + Math.min(0, DX[p.d] + DY[p.d]), { c: o, pi, held: [] });
+      }
+    }
+  }
+}
+// A loop: its far half, the cars on it, its near half, the cars on that.
+function drawLoop(ctx, c, pi, wx0, wx1, wy0, wy1) {
+  const p = c.pieces[pi];
+  if (!p || p.t !== 'loop') return;
+  const mx = p.x + 0.5 + DX[p.d] * 0.5, my = p.y + 0.5 + DY[p.d] * 0.5, X = isoX(mx, my), Y = isoY(mx, my, p.h0);
+  if (X < wx0 - 110 || X > wx1 + 110 || Y - 150 > wy1 || Y + 50 < wy0) return;
+  const alpha = ui0.editing && ui0.editing !== c.id ? 0.85 : undefined;
+  const lc = loopCars.get(c.id * 1024 + pi), far = loopFarHalf(c, pi);
+  for (let h = 0; h < 2; h++) {
+    drawPiece(ctx, c, pi, alpha, undefined, h);
+    const cars = lc && lc[h ? 1 - far : far];
+    if (cars && cars.length) {
+      if (cars.length > 1) cars.sort((a, b) => a.d - b.d);
+      for (const car of cars) drawCar(ctx, c, car);
+    }
+  }
+}
+let ui0 = { editing: 0 };
+
 export function render(ctx, time, ui) {
+  ui0 = ui;
   const { w, h, dpr } = view, z = cam.zoom, TH = themeOf(S.theme);
+  if (S.theme !== stampTheme) { stampTheme = S.theme; stamps.clear(); if (SP.setTuft) SP.setTuft(TH.tuft === '#5aa83d' ? '#3d9a47' : TH.tuft); }
   const dark = look.night ? darkness() : 0;
   if (SP.setNight) SP.setNight(dark);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -391,8 +438,8 @@ export function render(ctx, time, ui) {
     const cw = ctx.canvas.width, ch = ctx.canvas.height;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawImage(ground, gE - px.e, gF - px.f, cw, ch, 0, 0, cw, ch);
-    if (occlTv !== S.tv) markOccluders();
-  } else drawBackdrop(ctx, TH, w, h, z, time);
+    if (occlTv !== S.tv || occlPv !== S.pv) markOccluders();
+  } else drawBackdrop(ctx, TH, w, h, z);
   ctx.setTransform(A, 0, 0, A, px.e, px.f);
   const wx0 = cam.x - w / 2 / z - 48, wx1 = cam.x + w / 2 / z + 48;
   const wy0 = cam.y - h / 2 / z - 48, wy1 = cam.y + h / 2 / z;
@@ -412,6 +459,8 @@ export function render(ctx, time, ui) {
 
   // dynamic things go into per-tile buckets so they sort with the scenery
   buckets.clear();
+  if (loopCars.size > 64) loopCars.clear(); // (coasters come and go)
+  for (const v of loopCars.values()) { v[0].length = 0; v[1].length = 0; }
   for (const g of S.guests) {
     if (g.st === 'queue' || g.st === 'ride') continue;
     guestPos(g, gp);
@@ -474,8 +523,15 @@ export function render(ctx, time, ui) {
           fun: moving && v > 9 && p.t !== 'station' && !p.chain ? 1 : 0,
         };
         riders -= 2;
-        const tx = Math.max(0, Math.min(N - 1, Math.floor(tp.x))), ty = Math.max(0, Math.min(N - 1, Math.floor(tp.y)));
-        addBucket(idx(tx, ty), car);
+        if (p.t === 'loop') {
+          const key = c.id * 1024 + tp.pi;
+          let lc = loopCars.get(key);
+          if (!lc) loopCars.set(key, (lc = [[], []]));
+          lc[tp.u < 0.5 ? 0 : 1].push(car);
+        } else {
+          const tx = Math.max(0, Math.min(N - 1, Math.floor(tp.x))), ty = Math.max(0, Math.min(N - 1, Math.floor(tp.y)));
+          addBucket(idx(tx, ty), car);
+        }
         if (j === 0 && moving && dark > 0.05) lights.push(isoX(tp.x, tp.y), isoY(tp.x, tp.y, tp.z + 0.6), 34, 1);
       }
       // the camera follows the first train in the list
@@ -484,78 +540,92 @@ export function render(ctx, time, ui) {
   }
 
   const sel = ui.sel;
+  if (latePv !== S.pv) planLate();
+  // what stands on one tile (apart from the ground): scenery, track, a stall, guests and cars, the entrance
+  const cell = (x, y, i, sx, sy, he) => {
+    const sc = S.scn[i];
+    if (sc) {
+      if (!STILL[sc]) drawScenery(ctx, sc, sx, sy + HH, time, hash(x, y));
+      else if (stamp) stampScenery(ctx, sc, sx, sy + HH, hash(x, y), dark > 0.3);
+      else drawScenery(ctx, sc, sx, sy + HH, time, stampHash(hash(x, y))); // the same look as its picture
+      if (dark > 0.05 && (sc === SCN.lamp || sc === SCN.torch)) lights.push(sx, sy + HH - 30, sc === SCN.lamp ? 78 : 58 + Math.sin(time * 9 + x) * 5, 0);
+    }
+    let roofs = null;
+    if (S.trk.has(i)) {
+      for (const s of S.trk.get(i)) {
+        const c = S.objs[s.c];
+        if (!c) continue;
+        const p = c.pieces[s.p];
+        if (!p || p.t === 'loop') continue; // loops are drawn between the diagonals, see planLate
+        drawPiece(ctx, c, s.p, ui.editing && ui.editing !== c.id ? 0.85 : undefined, i);
+        if (p.t === 'station') {
+          (roofs || (roofs = [])).push(c, p);
+          if (dark > 0.05) lights.push(sx, sy - 12, 62, 0);
+        }
+      }
+    }
+    const oid = S.occ[i];
+    if (oid) {
+      const o = S.objs[oid];
+      if (o && o.w === 1 && o.h === 1) drawObj(o);
+    }
+    const b = buckets.get(i);
+    if (b) {
+      if (b.length > 1) b.sort((p, q) => p.d - q.d);
+      for (const e of b) {
+        if (e.car) drawCar(ctx, e.c, e);
+        else {
+          const gx = isoX(e.x, e.y), gy = isoY(e.x, e.y, e.z);
+          drawGuest(ctx, e.g, gx, gy, sel && sel.kind === 'guest' && sel.id === e.g.id, time, rain);
+          if (e.g.emT > 0 && fine) emotes.push(e.g.em, gx, gy - 27, Math.min(1, e.g.emT * 2));
+        }
+      }
+    }
+    if (roofs) for (let k = 0; k < roofs.length; k += 2) stationRoof(ctx, roofs[k], roofs[k + 1]);
+    if (x === S.ent.x && y === S.ent.y) {
+      drawEntrance(ctx, x, y, he, time);
+      if (dark > 0.05) lights.push(sx, sy - 10, 90, 0);
+    }
+  };
+  const drawObj = (o) => {
+    const ox = isoX(o.x + o.w / 2, o.y + o.h / 2), oy = isoY(o.x + o.w / 2, o.y + o.h / 2, o.z);
+    // a new building pops up with a little bounce
+    const age = o.pop ? time - o.pop : 9;
+    const squash = age < 0.45 ? 1 + Math.sin((age / 0.45) * Math.PI) * 0.16 * (1 - age / 0.45) - (age < 0.12 ? (0.12 - age) * 2.5 : 0) : 1;
+    if (squash !== 1) { ctx.save(); ctx.translate(ox, oy); ctx.scale(2 - squash, squash); ctx.translate(-ox, -oy); }
+    setOrigin(ox, oy);
+    if (o.kind === 'ride') drawRide(ctx, o, time); else drawStall(ctx, o, time);
+    if (squash !== 1) ctx.restore();
+    if (dark > 0.05 && o.open) {
+      if (o.kind === 'ride') lights.push(ox, oy - (RIDE_TOP[o.type] || 3) * 6, 56 + 20 * (o.w + o.h), 0);
+      else lights.push(ox, oy - 14, 48, 0);
+    }
+  };
   for (let d = 0; d <= 2 * N - 2; d++) {
     const xa = Math.max(0, d - N + 1), xb = Math.min(N - 1, d);
     for (let x = xa; x <= xb; x++) {
       const y = d - x, i = idx(x, y);
       const he = heff(i), sx = isoX(x, y), sy = isoY(x, y, he);
-      const hasTrack = S.trk.has(i);
-      if (sx < wx0 - HW || sx > wx1 + HW || sy < wy0 - 40 || sy > wy1 + (hasTrack ? 460 : S.occ[i] ? 240 : 120)) continue;
+      if (sx < wx0 - HW || sx > wx1 + HW || sy > wy1 + (S.trk.has(i) ? 460 : S.occ[i] ? 240 : 120)) continue;
+      if (sy < wy0 - 40 && sy < wy0 - 40 - cliffDrop(x, y, i, he)) continue;
       // from the picture of the ground, only tiles that can hide something behind them are drawn again
       if (!cached || occl[i]) drawTile(ctx, TH, x, y, i, he, sx, sy, time, detail);
       else if (detail && S.water[i] && !S.path[i]) ripple(ctx, x, y, sx, sy, time);
-      const sc = S.scn[i];
-      if (sc) {
-        if (stamp && STILL[sc]) stampScenery(ctx, sc, sx, sy + HH, hash(x, y), dark > 0.3); else drawScenery(ctx, sc, sx, sy + HH, time, hash(x, y));
-        if (dark > 0.05 && (sc === SCN.lamp || sc === SCN.torch)) lights.push(sx, sy + HH - 30, sc === SCN.lamp ? 78 : 58 + Math.sin(time * 9 + x) * 5, 0);
-      }
-      let roofs = null;
-      if (hasTrack) {
-        const list = S.trk.get(i);
-        for (const s of list) {
-          const c = S.objs[s.c];
-          if (!c) continue;
-          const p = c.pieces[s.p];
-          if (!p) continue;
-          const alpha = ui.editing && ui.editing !== c.id ? 0.85 : undefined;
-          if (p.t === 'loop') {
-            const front = p.d === 0 || p.d === 1;
-            const isSecond = !(p.x === x && p.y === y);
-            if (front !== isSecond) continue;
-            drawPiece(ctx, c, s.p, alpha);
-          } else drawPiece(ctx, c, s.p, alpha, i);
-          if (c.sim && c.sim.stall === s.p) hot(ctx, p);
-          if (p.t === 'station') {
-            (roofs || (roofs = [])).push(c, p);
-            if (dark > 0.05) lights.push(sx, sy - 12, 62, 0);
-          }
-        }
-      }
-      const oid = S.occ[i];
-      if (oid) {
-        const o = S.objs[oid];
-        if (o && x === o.x + o.w - 1 && y === o.y + o.h - 1) {
-          const ox = isoX(o.x + o.w / 2, o.y + o.h / 2), oy = isoY(o.x + o.w / 2, o.y + o.h / 2, o.z);
-          // a new building pops up with a little bounce
-          const age = o.pop ? time - o.pop : 9;
-          const squash = age < 0.45 ? 1 + Math.sin((age / 0.45) * Math.PI) * 0.16 * (1 - age / 0.45) - (age < 0.12 ? (0.12 - age) * 2.5 : 0) : 1;
-          if (squash !== 1) { ctx.save(); ctx.translate(ox, oy); ctx.scale(2 - squash, squash); ctx.translate(-ox, -oy); }
-          setOrigin(ox, oy);
-          if (o.kind === 'ride') drawRide(ctx, o, time); else drawStall(ctx, o, time);
-          if (squash !== 1) ctx.restore();
-          if (dark > 0.05 && o.open) {
-            if (o.kind === 'ride') lights.push(ox, oy - (RIDE_TOP[o.type] || 3) * 6, 56 + 20 * (o.w + o.h), 0);
-            else lights.push(ox, oy - 14, 48, 0);
-          }
-        }
-      }
-      const b = buckets.get(i);
-      if (b) {
-        if (b.length > 1) b.sort((p, q) => p.d - q.d);
-        for (const e of b) {
-          if (e.car) drawCar(ctx, e.c, e);
-          else {
-            const gx = isoX(e.x, e.y), gy = isoY(e.x, e.y, e.z);
-            drawGuest(ctx, e.g, gx, gy, sel && sel.kind === 'guest' && sel.id === e.g.id, time, rain);
-            if (e.g.emT > 0 && fine) emotes.push(e.g.em, gx, gy - 27, Math.min(1, e.g.emT * 2));
-          }
-        }
-      }
-      if (roofs) for (let k = 0; k < roofs.length; k += 2) stationRoof(ctx, roofs[k], roofs[k + 1]);
-      if (x === S.ent.x && y === S.ent.y) {
-        drawEntrance(ctx, x, y, he, time);
-        if (dark > 0.05) lights.push(sx, sy - 10, 90, 0);
-      }
+      const w = lateWait.get(i);
+      if (w) { w.held.push(x, y, i, sx, sy, he); continue; }
+      cell(x, y, i, sx, sy, he);
+    }
+    // the big things that go between this diagonal and the next
+    const L = lateAt[d];
+    if (L) for (const e of L) {
+      if (e.o) {
+        const o = e.o;
+        if (S.objs[o.id] !== o) continue;
+        const ox = isoX(o.x + o.w / 2, o.y + o.h / 2), oy = isoY(o.x + o.w / 2, o.y + o.h / 2, o.z), r = (o.w + o.h) * 34;
+        if (ox > wx0 - r && ox < wx1 + r && oy - (RIDE_TOP[o.type] || 3) * 8 - 90 < wy1 && oy + r * 0.5 > wy0) drawObj(o);
+      } else drawLoop(ctx, e.c, e.pi, wx0, wx1, wy0, wy1);
+      // a tile in front of the ride that had to wait for it
+      if (e.held.length) { for (let k = 0; k < e.held.length; k += 6) cell(e.held[k], e.held[k + 1], e.held[k + 2], e.held[k + 3], e.held[k + 4], e.held[k + 5]); e.held.length = 0; }
     }
   }
   for (let k = 0; k < emotes.length; k += 4) drawEmote(ctx, emotes[k], emotes[k + 1], emotes[k + 2], emotes[k + 3]);
@@ -591,11 +661,6 @@ export function render(ctx, time, ui) {
   drawFxScreen(ctx, w, h);
 }
 
-function hot(ctx, p) {
-  const z = Math.max(p.h0, p.h1) + 0.3;
-  ctx.fillStyle = 'rgba(255,40,40,0.45)';
-  ctx.beginPath(); ctx.arc(isoX(p.x + 0.5, p.y + 0.5), isoY(p.x + 0.5, p.y + 0.5, z), 13, 0, 6.3); ctx.fill();
-}
 // Scenery that does not move (apart from a gentle sway) can be stamped from a picture made once, which
 // is much cheaper than drawing its shapes again every frame. Four pictures per kind cover the size variety.
 const STILL = SCENERY.map((d) => !!d && ['oak', 'pine', 'snowpine', 'palm', 'cactus', 'bush', 'hedge', 'topiary', 'flowers', 'rock', 'bench', 'picnic', 'statue', 'snowman', 'lamp'].includes(d.id));
@@ -604,7 +669,11 @@ const LIT = SCENERY.map((d) => !!d && d.id === 'lamp');
 // The pictures are made at the screen's own scale (stampScale, set once the zoom has settled), so
 // stamping is a plain copy rather than shrinking a big picture every time.
 const stamps = new Map();
+let stampTheme = '';
 let stampScale = 1;
+// Still scenery comes in four looks per kind (size, colours, apples...): the same four whether it is
+// drawn from its picture or as shapes, so nothing changes when the zoom or the picture quality does.
+const stampHash = (hsh) => (Math.min(3, (hsh * 4) | 0) + 0.5) / 4;
 function stampScenery(ctx, code, cx, cy, hsh, lit) {
   const b = Math.min(3, (hsh * 4) | 0), key = (code * 4 + b) * 2 + (lit && LIT[code] ? 1 : 0);
   let c = stamps.get(key);
@@ -619,7 +688,7 @@ function stampScenery(ctx, code, cx, cy, hsh, lit) {
     } else c = null;
     stamps.set(key, c);
   }
-  if (!c) drawScenery(ctx, code, cx, cy, 0, hsh);
+  if (!c) drawScenery(ctx, code, cx, cy, 0, stampHash(hsh));
   else if (c.s === px.a) blit(ctx, c.cv, cx - 36, cy - 72);
   else ctx.drawImage(c.cv, cx - 36, cy - 72, 72, 88);
 }
@@ -646,6 +715,25 @@ function cloudShadows(ctx, time) {
   ctx.globalAlpha = 1;
 }
 
+// Tiles are filled one by one, and where two meet the edge smoothing of both lets a hairline of what is
+// behind shine through. In the kept picture of the ground each face is also traced in its own colour,
+// one device pixel wide (seam), which closes those lines.
+let seam = 0;
+function seal(ctx, col) {
+  ctx.fillStyle = col; ctx.fill();
+  if (seam) { ctx.strokeStyle = col; ctx.lineWidth = seam; ctx.lineJoin = 'round'; ctx.stroke(); }
+}
+const lows = new Map();
+/** A cliff colour a shade darker, for the lower half of a tall cliff. */
+function low(col) { let c = lows.get(col); if (!c) lows.set(col, (c = mix(col, '#3c1e14', 0.09))); return c; }
+// Surf along the sea at the edge of the map. In the kept picture it is drawn after all the tiles, so the
+// next tile's traced edge does not nick it.
+let surf = null;
+function foam(ctx, TH, x0, y0, x1, y1) {
+  if (seam) { surf.push(x0, y0, x1, y1); return; }
+  ctx.strokeStyle = TH.foam; ctx.lineWidth = 2.2; ctx.lineCap = 'butt';
+  ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+}
 function drawTile(ctx, TH, x, y, i, he, sx, sy, time, detail) {
   const water = S.water[i], path = S.path[i];
   // side faces
@@ -656,28 +744,29 @@ function drawTile(ctx, TH, x, y, i, he, sx, sy, time, detail) {
     ctx.beginPath();
     ctx.moveTo(sx - HW, sy + HH); ctx.lineTo(sx, sy + HH * 2); ctx.lineTo(sx, sy + HH * 2 + dh); ctx.lineTo(sx - HW, sy + HH + dh);
     ctx.closePath();
-    ctx.fillStyle = TH.sideL; ctx.fill();
+    seal(ctx, TH.sideL);
     if (dh > 20 && detail) {
-      ctx.fillStyle = 'rgba(60,30,20,0.09)';
-      ctx.beginPath(); ctx.moveTo(sx - HW, sy + HH + dh * 0.5); ctx.lineTo(sx, sy + HH * 2 + dh * 0.5); ctx.lineTo(sx, sy + HH * 2 + dh); ctx.lineTo(sx - HW, sy + HH + dh); ctx.fill();
+      // the lower half of a tall cliff a shade darker
+      ctx.beginPath(); ctx.moveTo(sx - HW, sy + HH + dh * 0.5); ctx.lineTo(sx, sy + HH * 2 + dh * 0.5); ctx.lineTo(sx, sy + HH * 2 + dh); ctx.lineTo(sx - HW, sy + HH + dh); ctx.closePath();
+      seal(ctx, low(TH.sideL));
     }
     if (path && !edgeL && S.path[i + N] && he - hl <= 1.1) stairs(ctx, sx - HW, sy + HH, sx, sy + HH * 2, dh, TH.stairL);
-    else if (!water && detail) { ctx.fillStyle = TH.lip; ctx.beginPath(); ctx.moveTo(sx - HW, sy + HH); ctx.lineTo(sx, sy + HH * 2); ctx.lineTo(sx, sy + HH * 2 + 2.5); ctx.lineTo(sx - HW, sy + HH + 2.5); ctx.fill(); }
-    if (edgeL && TH.sea) { ctx.strokeStyle = TH.foam; ctx.lineWidth = 2.2; ctx.beginPath(); ctx.moveTo(sx - HW, sy + HH + dh); ctx.lineTo(sx, sy + HH * 2 + dh); ctx.stroke(); }
+    else if (!water && detail) { ctx.beginPath(); ctx.moveTo(sx - HW, sy + HH); ctx.lineTo(sx, sy + HH * 2); ctx.lineTo(sx, sy + HH * 2 + 2.5); ctx.lineTo(sx - HW, sy + HH + 2.5); ctx.closePath(); seal(ctx, TH.lip); }
+    if (edgeL && TH.sea) foam(ctx, TH, sx - HW, sy + HH + dh, sx, sy + HH * 2 + dh);
   }
   if (he > hr) {
     const dh = (he - hr) * ZH;
     ctx.beginPath();
     ctx.moveTo(sx, sy + HH * 2); ctx.lineTo(sx + HW, sy + HH); ctx.lineTo(sx + HW, sy + HH + dh); ctx.lineTo(sx, sy + HH * 2 + dh);
     ctx.closePath();
-    ctx.fillStyle = TH.sideR; ctx.fill();
+    seal(ctx, TH.sideR);
     if (dh > 20 && detail) {
-      ctx.fillStyle = 'rgba(60,30,20,0.09)';
-      ctx.beginPath(); ctx.moveTo(sx, sy + HH * 2 + dh * 0.5); ctx.lineTo(sx + HW, sy + HH + dh * 0.5); ctx.lineTo(sx + HW, sy + HH + dh); ctx.lineTo(sx, sy + HH * 2 + dh); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(sx, sy + HH * 2 + dh * 0.5); ctx.lineTo(sx + HW, sy + HH + dh * 0.5); ctx.lineTo(sx + HW, sy + HH + dh); ctx.lineTo(sx, sy + HH * 2 + dh); ctx.closePath();
+      seal(ctx, low(TH.sideR));
     }
     if (path && !edgeR && S.path[i + 1] && he - hr <= 1.1) stairs(ctx, sx, sy + HH * 2, sx + HW, sy + HH, dh, TH.stairR);
-    else if (!water && detail) { ctx.fillStyle = TH.lipR; ctx.beginPath(); ctx.moveTo(sx, sy + HH * 2); ctx.lineTo(sx + HW, sy + HH); ctx.lineTo(sx + HW, sy + HH + 2.5); ctx.lineTo(sx, sy + HH * 2 + 2.5); ctx.fill(); }
-    if (edgeR && TH.sea) { ctx.strokeStyle = TH.foam; ctx.lineWidth = 2.2; ctx.beginPath(); ctx.moveTo(sx, sy + HH * 2 + dh); ctx.lineTo(sx + HW, sy + HH + dh); ctx.stroke(); }
+    else if (!water && detail) { ctx.beginPath(); ctx.moveTo(sx, sy + HH * 2); ctx.lineTo(sx + HW, sy + HH); ctx.lineTo(sx + HW, sy + HH + 2.5); ctx.lineTo(sx, sy + HH * 2 + 2.5); ctx.closePath(); seal(ctx, TH.lipR); }
+    if (edgeR && TH.sea) foam(ctx, TH, sx, sy + HH * 2 + dh, sx + HW, sy + HH + dh);
   }
   // top
   ctx.beginPath();
@@ -685,7 +774,7 @@ function drawTile(ctx, TH, x, y, i, he, sx, sy, time, detail) {
   ctx.closePath();
   const wB = y > 0 && S.water[i - N], wA = x > 0 && S.water[i - 1], wC = !edgeR && S.water[i + 1], wD = !edgeL && S.water[i + N];
   if (water) {
-    ctx.fillStyle = wA && wB && wC && wD ? TH.deep : TH.water; ctx.fill();
+    seal(ctx, wA && wB && wC && wD ? TH.deep : TH.water);
     // foam where the water meets the bank behind it
     if ((!wA || !wB) && detail) {
       ctx.strokeStyle = TH.foam; ctx.lineWidth = 2; ctx.lineCap = 'round';
@@ -701,7 +790,7 @@ function drawTile(ctx, TH, x, y, i, he, sx, sy, time, detail) {
   }
   const hs = hash(x, y);
   if (path) {
-    ctx.fillStyle = path === 2 ? ((x + y) & 1 ? QUEUE[0] : QUEUE[1]) : (x + y) & 1 ? TH.path : TH.pathB; ctx.fill();
+    seal(ctx, path === 2 ? ((x + y) & 1 ? QUEUE[0] : QUEUE[1]) : (x + y) & 1 ? TH.path : TH.pathB);
     if (detail) {
       // paving joints
       ctx.strokeStyle = 'rgba(90,60,30,0.1)'; ctx.lineWidth = 1;
@@ -725,11 +814,10 @@ function drawTile(ctx, TH, x, y, i, he, sx, sy, time, detail) {
     if (!(y + 1 < N ? P(x, y + 1) : (x === S.ent.x))) { ctx.moveTo(sx - HW + 1, sy + HH); ctx.lineTo(sx, sy + HH * 2 - 1); }
     ctx.stroke();
   } else if (wA || wB || wC || wD) {
-    ctx.fillStyle = (x + y) & 1 ? TH.shore : TH.shoreB; ctx.fill();
+    seal(ctx, (x + y) & 1 ? TH.shore : TH.shoreB);
   } else {
     const lift = Math.max(0, Math.min(6, S.h[i]));
-    ctx.fillStyle = TH.pal[lift][((x + y) & 1) + (hs > 0.72 ? 2 : 0)];
-    ctx.fill();
+    seal(ctx, TH.pal[lift][((x + y) & 1) + (hs > 0.72 ? 2 : 0)]);
     if (detail && !S.scn[i] && !S.occ[i] && hs < 0.2) {
       const dx = (hash(y, x) - 0.5) * 30, dy = HH + (hash(x + 5, y + 3) - 0.5) * 12;
       if (hs < 0.13) {
@@ -796,7 +884,7 @@ function ripple(ctx, x, y, sx, sy, time) {
 
 // ---------- pictures kept between frames ----------
 let gE = 0, gF = 0;
-let ground = null, groundKey = '', gcx = 0, gcy = 0, lastZoom = 0, steady = 0, frameNo = 0, occlTv = -1;
+let ground = null, groundKey = '', gcx = 0, gcy = 0, lastZoom = 0, steady = 0, frameNo = 0, occlTv = -1, occlPv = -1;
 // the next ground picture, drawn a few rows per frame ahead of a moving camera (see render)
 let nextGround = null, spareGround = null;
 const occl = new Uint8Array(N * N);
@@ -808,25 +896,36 @@ function startGround(cv, TH, w, h, z, dpr, detail, cx, cy, key) {
   if (cv.width !== cw || cv.height !== ch) { cv.width = cw; cv.height = ch; }
   const g = cv.getContext('2d');
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  farGrad = null; drawBackdrop(g, TH, w, h, z, 0, cx, cy); farGrad = null;
+  drawBackdrop(g, TH, w, h, z, cx, cy);
   return {
-    cv, g, TH, z, A: dpr * z, detail, cx, cy, key, d: 0, done: false,
+    cv, g, TH, z, A: dpr * z, detail, cx, cy, key, d: 0, done: false, surf: [],
     E: Math.round(dpr * w / 2 - cx * dpr * z), F: Math.round(dpr * h / 2 - cy * dpr * z),
     wx0: cx - w / 2 / z - 80, wx1: cx + w / 2 / z + 80, wy0: cy - h / 2 / z - 90, wy1: cy + h / 2 / z + 150,
   };
 }
 function stepGround(j, n) {
   j.g.setTransform(j.A, 0, 0, j.A, j.E, j.F);
+  seam = 1 / j.A; surf = j.surf;
   const end = Math.min(2 * N - 1, j.d + n);
   for (; j.d < end; j.d++) {
     const d = j.d;
     for (let x = Math.max(0, d - N + 1); x <= Math.min(N - 1, d); x++) {
       const y = d - x, i = idx(x, y), he = heff(i), sx = isoX(x, y), sy = isoY(x, y, he);
-      if (sx < j.wx0 || sx > j.wx1 || sy < j.wy0 || sy > j.wy1) continue;
+      if (sx < j.wx0 || sx > j.wx1 || sy > j.wy1 || (sy < j.wy0 && sy < j.wy0 - cliffDrop(x, y, i, he))) continue;
       drawTile(j.g, j.TH, x, y, i, he, sx, sy, -1, j.detail);
     }
   }
+  seam = 0; surf = null;
   j.done = j.d >= 2 * N - 1;
+  if (j.done && j.surf.length) {
+    // the surf, all in one line with flat ends where the tiles meet
+    j.g.strokeStyle = j.TH.foam; j.g.lineWidth = 2.2; j.g.lineCap = 'butt';
+    j.g.beginPath();
+    const q = j.surf;
+    for (let k = 0; k < q.length; k += 4) { j.g.moveTo(q[k], q[k + 1]); j.g.lineTo(q[k + 2], q[k + 3]); }
+    j.g.stroke();
+    q.length = 0;
+  }
   return j.done;
 }
 // Canvas drawing is only recorded at first and painted when the picture is next used. Copying it into
@@ -847,12 +946,17 @@ function drawGround(TH, w, h, z, dpr, detail, key) {
   stepGround(j, 2 * N);
   useGround(j);
 }
+/** How far a tile's cliff faces reach down below its top, in world pixels: as far as the ground in front of it is lower. */
+function cliffDrop(x, y, i, he) {
+  return Math.max(0, he - Math.min(y + 1 < N ? heff(i + N) : SEA, x + 1 < N ? heff(i + 1) : SEA)) * ZH + 2 * HH;
+}
 // A tile has to be drawn again on top of the ground picture only if it stands higher than ground just
 // behind it, because then it can hide the feet of something standing there.
 function markOccluders() {
-  occlTv = S.tv;
+  occlTv = S.tv; occlPv = S.pv;
   for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-    const i = idx(x, y), h = S.h[i];
+    // a bridge's deck stands a level above the water: it hides the foot of what stands just behind it
+    const i = idx(x, y), h = walkH(i);
     let hit = 0;
     for (let dy = 0; dy <= 4 && !hit; dy++) for (let dx = 0; dx <= 4; dx++) {
       if ((!dx && !dy) || x - dx < 0 || y - dy < 0) continue;
@@ -903,9 +1007,9 @@ function drawEntrance(ctx, x, y, he, time) {
   ctx.save();
   ctx.translate((lx + rx) / 2, (ly + ry) / 2 - H + 10.5);
   ctx.transform(1, (ry - ly) / (rx - lx), 0, 1, 0, 0);
-  ctx.fillStyle = '#fff'; ctx.font = `900 9px ${FONT}`;
+  ctx.fillStyle = '#fff'; ctx.font = `900 8.5px ${FONT}`;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('COASTR', 0, 0.5);
+  ctx.fillText('COASTR', 0, 0.5, rx - lx - 3); // narrowed a little if needed to stay on the banner
   ctx.restore();
 }
 
@@ -914,6 +1018,18 @@ function outline(ctx, x, y, w, h, z, fill, stroke) {
   rectPath(ctx, x, y, w, h, z);
   if (fill) { ctx.fillStyle = fill; ctx.fill(); }
   if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 2; ctx.stroke(); }
+}
+// A warning dot on a coaster track, the same size on screen at any zoom: a pulsing halo, a white rim
+// and a solid red middle, so it shows on any track colour, on grass, water and at night.
+function warnDot(ctx, x, y, s, pulse, r0) {
+  const r = r0 * s;
+  ctx.fillStyle = `rgba(255,40,60,${0.16 + 0.2 * pulse})`;
+  ctx.beginPath(); ctx.arc(x, y, r * (1.6 + 0.4 * pulse), 0, 6.3); ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, r + 1.2 * s, 0, 6.3);
+  ctx.fillStyle = 'rgba(70,10,25,0.55)'; ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, r, 0, 6.3);
+  ctx.fillStyle = '#ff2d45'; ctx.fill();
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.2 * s; ctx.stroke();
 }
 function pill(ctx, text, x, y, col, s) {
   ctx.font = `800 ${12 * s}px ${FONT}`;
@@ -949,14 +1065,30 @@ function drawOverlays(ctx, time, ui) {
     if (o && o.kind !== 'coaster') outline(ctx, o.x, o.y, o.w, o.h, o.z + 0.05, null, `rgba(255,255,255,${0.5 + 0.4 * pulse})`);
     else if (o) for (const p of o.pieces) if (p.t === 'station') outline(ctx, p.x, p.y, 1, 1, p.h0 + 0.25, null, `rgba(255,255,255,${0.5 + 0.4 * pulse})`);
   }
-  // rough spots on the coaster being built or looked at
+  // rough spots on the coaster being built or looked at: one dot for each stretch, at its roughest point
   const rc = S.objs[ui.editing] || (ui.sel && ui.sel.kind === 'obj' && S.objs[ui.sel.id]);
   if (rc && rc.kind === 'coaster' && rc.closed && rc.sim && rc.sim.ok && rc.I > 8) {
     const sm = rc.sim, lim = Math.max(1.1, sm.maxGl * 0.7);
-    ctx.fillStyle = `rgba(255,45,45,${0.35 + 0.3 * pulse})`;
-    for (let k = 2; k < sm.segs; k += 2) {
-      if (sm.gl[k] > lim || sm.gv[k] > 4.4) { const q = k % sm.n; ctx.beginPath(); ctx.arc(isoX(sm.X[q], sm.Y[q]), isoY(sm.X[q], sm.Y[q], sm.Z[q] + 0.3), 6, 0, 6.3); ctx.fill(); }
+    let best = -1, worst = 0, gap = 99;
+    for (let k = 2; k <= sm.segs + 4; k++) {
+      const kk = Math.min(k, sm.segs), rough = k <= sm.segs ? Math.max(sm.gl[kk] / lim, sm.gv[kk] / 4.4) : 0;
+      if (rough > 1) { gap = 0; if (rough > worst) { worst = rough; best = kk; } continue; }
+      // a stretch ends after a few calm samples
+      if (++gap === 4 && best >= 0) {
+        const q = best % sm.n;
+        warnDot(ctx, isoX(sm.X[q], sm.Y[q]), isoY(sm.X[q], sm.Y[q], sm.Z[q] + 0.3), s, pulse, 7);
+        best = -1; worst = 0;
+      }
     }
+  }
+  // where a train would stop, on every coaster: a bigger dot with an exclamation mark
+  for (const id in S.objs) {
+    const c = S.objs[id];
+    if (c.kind !== 'coaster' || !c.sim || c.sim.stall < 0) continue;
+    const sm = c.sim, q = Math.min(sm.segs, sm.n - 1), x = isoX(sm.X[q], sm.Y[q]), y = isoY(sm.X[q], sm.Y[q], sm.Z[q] + 0.3);
+    warnDot(ctx, x, y, s, pulse, 10);
+    ctx.fillStyle = '#fff'; ctx.font = `900 ${13 * s}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('!', x, y + 0.5 * s);
   }
   // ghost for the active tool
   const g = ui.ghost;

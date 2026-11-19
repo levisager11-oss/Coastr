@@ -1433,6 +1433,9 @@ function frond(ctx, tx, ty, an, len, col) {
   ctx.quadraticCurveTo(tx + dx * len * 0.5, ty - 1 + dy * 4, tx, ty + 1.6);
   ctx.fill();
 }
+// the tuft at the foot of a rock takes the colour of the map's own tufts: grass, dry grass or snow
+let tuftCol = '#3d9a47';
+export function setTuft(col) { tuftCol = col || '#3d9a47'; }
 function snowBall(ctx, y, r) { blob(ctx, 0, y, r, '#cfdcec'); ctx.stroke(); blob(ctx, -r * 0.13, y - r * 0.13, r * 0.84, '#ffffff'); }
 const FIR = ['#23804f', '#2a8f5a', '#33a066'], FIR_DARK = ['#1a663e', '#207347', '#278252'];
 const FIR_SNOW = ['#1f6f5c', '#27806a', '#2f9179'], FIR_SNOW_DARK = ['#175646', '#1d6453', '#24735f'];
@@ -1614,7 +1617,7 @@ export function drawScenery(ctx, code, cx, cy, t, hsh) {
       ctx.lineTo(cx + 8, cy + 5); ctx.lineTo(cx + 1, cy + 5.4); ctx.closePath(); ctx.stroke();
       ctx.fillStyle = '#aab2c0'; ctx.beginPath(); ctx.ellipse(cx - 10.5, cy + 5, 4, 2.6, 0, 0, 6.3); ctx.fill(); ctx.stroke();
       ctx.fillStyle = '#d3d8e1'; ctx.beginPath(); ctx.ellipse(cx - 11.2, cy + 4.2, 2.2, 1.2, 0, 0, 6.3); ctx.fill();
-      ctx.strokeStyle = '#3d9a47'; ctx.lineWidth = 1.2; ctx.lineCap = 'round';
+      ctx.strokeStyle = tuftCol; ctx.lineWidth = 1.2; ctx.lineCap = 'round';
       ctx.beginPath(); ctx.moveTo(cx + 12, cy + 5); ctx.lineTo(cx + 11, cy + 1); ctx.moveTo(cx + 12.6, cy + 5); ctx.lineTo(cx + 14, cy + 1.4); ctx.moveTo(cx + 13.4, cy + 5.2); ctx.lineTo(cx + 16, cy + 3); ctx.stroke();
       break;
     }
@@ -1753,8 +1756,8 @@ export function thumbRide(ctx, type, w, h) {
 }
 export function thumbStall(ctx, type, w, h) {
   ctx.save();
-  ctx.translate(w / 2, h / 2 + 17);
   const sc = Math.min(w, h) / 78;
+  ctx.translate(w / 2, h / 2 + 26.5 * sc); // the stall stands a little below the middle, at any size
   ctx.scale(sc, sc);
   setOrigin(0, 0);
   drawStall(ctx, { type, x: 0 }, 0);

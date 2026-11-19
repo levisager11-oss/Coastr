@@ -30,14 +30,18 @@ function rng(seed) {
   return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
 }
 
+// S.pv and S.tv count changes, and kept pictures of the park are made again when they change. Every new
+// or loaded park starts them far past the last park's, so no picture of another park is ever taken for it.
+let freshCount = 1;
 export function newGame(mode, scenario) {
   const sc = SCENARIOS[scenario] ? scenario : 'meadows', SC = SCENARIOS[sc];
+  freshCount += 1e6;
   for (const k of Object.keys(S)) delete S[k];
   Object.assign(S, {
     v: 2, mode, sc, theme: SC.theme, sandbox: mode === 'sandbox',
     h: new Uint8Array(N * N).fill(BASE_H), water: new Uint8Array(N * N), path: new Uint8Array(N * N),
     scn: new Uint8Array(N * N), occ: new Int32Array(N * N),
-    objs: {}, nextId: 1, trk: new Map(), pv: 1, tv: 1,
+    objs: {}, nextId: 1, trk: new Map(), pv: freshCount, tv: freshCount,
     ent: { x: N >> 1, y: N - 1 },
     cash: mode === 'sandbox' ? 0 : SC.cash, loan: 0, fee: 8, open: false,
     time: 0, speed: 1, guests: [], gid: 1, rating: 500, peakGuests: 0,

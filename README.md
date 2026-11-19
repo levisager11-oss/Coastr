@@ -12,6 +12,7 @@ Play it on Toki: https://playtoki.app/game/coastr
   tapping arrows on the map at the end of the track (or with the arrow keys), and change a finished
   track by tapping one of its pieces. Ratings for excitement, intensity and nausea are worked out
   from the track itself the moment the circuit is closed; red dots show where a track is too rough.
+  While building, a side view shows the track's height and the train's speed all the way round.
   Each coaster can be painted, run up to three trains, and have its train followed by the camera.
   Six ready-made designs can be placed in one go, and your own designs can be saved and reused.
 - **Four scenarios** on different maps and in different looks (meadow, lagoon, desert, snowy
