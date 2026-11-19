@@ -116,8 +116,12 @@ Durable Object per room, at `wss://coastr-rooms.levisager.workers.dev` (`RELAY` 
 - Map size is `N` in `data.js` (60). Always index with `idx(x, y)`; never hardcode the size.
 - Directions: 0 = +x, 1 = +y, 2 = -x, 3 = -y (`DX`/`DY`). Turning right is `d + 1`.
 - Screen: `isoX = (x - y) * 32`, `isoY = (x + y) * 16 - z * 16`. Tiles are drawn back to front by
-  `x + y`; a multi-tile ride is drawn when its front corner tile is reached; guests and train cars
-  go into per-tile buckets so they sort with the scenery.
+  `x + y`; guests and train cars go into per-tile buckets so they sort with the scenery. Rides
+  bigger than one tile and coaster loops are drawn between two diagonals (`planLate` in
+  `render.js`): after the last one holding anything behind them, before the first holding anything
+  in front. Drawn at their front corner they would cover guests standing beside their front sides.
+  Only beside the short end of a 3x1 ride does one tile have to wait for the ride (`lateWait`).
+  Cars on a loop are drawn with it: far half, its cars, near half, its cars (`loopCars`).
 - Terrain is one height per tile (0..8). For coaster physics one level is 2 m and one tile is 4 m.
 
 **Scenarios**
@@ -134,6 +138,8 @@ Durable Object per room, at `wss://coastr-rooms.levisager.workers.dev` (`RELAY` 
   functions there, which return `{ ok }` or `{ ok: false, why: 'e_...' }`; `why` is an i18n key.
 - Bump `S.pv` whenever paths, objects or open/closed states change. The guest path-finding cache,
   the "not next to a path" warnings, the queue lines and the kept ground picture depend on it.
+  Every new or loaded park starts `S.pv` and `S.tv` a million past the last park's, so a kept
+  picture of one park is never taken for another (`freshCount` in `world.js`).
 - `S.path` holds 0 (none), 1 (path) or 2 (queue line). A path on a water tile is a bridge: guests
   walk at `walkH(i)` (one level above the water's bed), so use `walkH` for anything about where
   feet are, not `S.h`.
@@ -149,6 +155,14 @@ Durable Object per room, at `wss://coastr-rooms.levisager.workers.dev` (`RELAY` 
   `pieceCells` (`world.js`) and `pieceExit` (`coaster.js`) instead of assuming one tile.
 - The renderer draws a multi-tile piece in parts, one per tile, so trains and scenery sort correctly
   (`parts` in `buildGeo`). Cached drawing geometry is rebuilt when `S.tv` changes (terrain or water).
+- Slopes (`bend` / `heightAt` in `coaster.js`): where the slope changes, the bend is rounded over
+  both pieces, so crests sit a little lower and dips a little higher than the built heights (at most
+  `BEND_DEV`, less at the top and bottom of a hill). Heights go by distance over the ground, so a
+  sloped turn meets a sloped straight without a kink. Loops and corkscrews keep their own shape and
+  are level at both ends; a sloped piece next to one levels out over its own length. Drops for the
+  ratings are counted from the built heights, not the rounded ones. A loop is a teardrop
+  (`LOOP_SHAPE`), whose bend grows gently out of the flat. Each piece takes its end directions from
+  the samples of the pieces either side, so both work out the same frame at a joint.
 - In the builder, `ui.cands` holds the choices shown as round buttons on the map; `builderAct` is
   the one place every builder action goes through (buttons, map buttons and keys). `ui.pick` is the
   piece tapped for changing; `alterPiece` and `cutAfter` (`coaster.js`) do the work.
@@ -159,7 +173,8 @@ Durable Object per room, at `wss://coastr-rooms.levisager.workers.dev` (`RELAY` 
   `canPlaceDesign`, `placeDesign` in `coaster.js`). The ready-made ones are `DESIGNS` in `data.js`;
   each must close on flat ground, so re-check them (build one with `placeDesign` in Node) after any
   change to piece geometry. Saved ones live in `localStorage` under `coastr.designs`.
-- No support (column or trestle bent) stands on a tile with a path or scenery: the track spans it.
+- No support (column, trestle bent, loop leg) stands on a tile with a path or scenery: the track spans
+  it. A loop's legs step further out to the side to find free ground, or are left out.
   So a piece's cached drawing also depends on those tiles; `geoFresh` in `track.js` checks the
   tiles it looked at whenever `S.pv` changes.
 - Track and train pictures are in `track.js`. Its geometry cache (`piece.geo`) must hold everything
@@ -224,8 +239,11 @@ Durable Object per room, at `wss://coastr-rooms.levisager.workers.dev` (`RELAY` 
 - Speed (`render.js`, `main.js`): the backdrop and all ground tiles are drawn once into a picture
   a quarter larger than the screen (`drawGround`) and copied each frame; it is redrawn when the
   camera leaves it, the zoom settles, or `S.tv` / `S.pv` change. Only tiles marked in `occl` (higher
-  than ground just behind them) are drawn again in order, so they can still hide things. Anything
-  in `drawTile` that moves must cope with `time < 0`, which means "for the kept picture".
+  than ground just behind them; a bridge counts as its deck, `walkH`) are drawn again in order, so
+  they can still hide things. Anything in `drawTile` that moves must cope with `time < 0`, which
+  means "for the kept picture". In the kept picture each face is also traced in its own colour one
+  device pixel wide (`seal`) to close the hairlines between tiles, and the sea's surf is drawn after
+  all tiles. The backdrop is fixed to the world, so the kept picture and direct drawing match.
   While the camera moves, the next picture is started early, centred further along, and drawn eight
   rows of tiles per frame (`startGround` / `stepGround`, each slice made to paint at once by `settle`)
   so it is ready before it is needed; a change to the park still redraws it in one go.
@@ -238,7 +256,9 @@ Durable Object per room, at `wss://coastr-rooms.levisager.workers.dev` (`RELAY` 
   off by a fraction of a pixel or scaled is several times slower (measured: slower than drawing a
   tree's shapes). Pictures made this way: still scenery (`stampScenery`, lamps lit and unlit), guests
   (`guestPics`, per look and a few poses), and every part of every coaster track (`paintPart` in
-  `track.js`, a few per frame, within `PIC_BUDGET` pixels, freed when long off screen). They are
+  `track.js`, a few per frame, within `PIC_BUDGET` pixels, freed when long off screen; their corner
+  sits on a whole device pixel so neighbouring pieces line up exactly). Still scenery has four looks
+  per kind (`stampHash`), also when drawn as shapes, so nothing changes at the switch. They are
   made again when the zoom settles; while zooming the old ones are stretched. Close up (scale above 3)
   everything is drawn as shapes. `look.pics = false` switches the track and guest pictures off.
 - Track paths are `BPath` (a `Path2D` that records its bounds) so a part knows its picture's size.

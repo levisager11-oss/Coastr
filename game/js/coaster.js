@@ -9,10 +9,11 @@ const no = (why) => ({ ok: false, why });
 const G = 9.81;
 const TILE_M = 4; // metres per tile
 const UNIT_M = 2; // metres per height level
-const LOOP_R = 1.8; // loop radius in height levels
-const LOOP_A = 0.8; // loop radius along the track, in tiles
 const SAMPLES = 8;
-const LOOP_SAMPLES = 32;
+const LOOP_SAMPLES = 40;
+const LOOP_H = 3.6; // height of a loop, in levels
+const LOOP_W = 0.18; // how far the way up and the way down lie to each side of the middle, in tiles
+const LOOP_EASE = 0.75;
 
 const WIDE_R = 1.5; // radius of a wide turn, in tiles
 const WIDE_LEN = (WIDE_R * Math.PI) / 2;
@@ -31,9 +32,6 @@ export const isWide = (p) => p.t === 'wl' || p.t === 'wr';
 export const isLeft = (p) => p.t === 'l' || p.t === 'wl';
 export const isInv = (p) => p.t === 'loop' || p.t === 'cork';
 export const exitDir = (p) => (isTurn(p) ? (p.d + (isLeft(p) ? 3 : 1)) % 4 : p.d);
-/** Length of a piece in tiles along the track, for working out how steep it is. */
-export const pieceLen = (p) => (isWide(p) ? WIDE_LEN : isInv(p) ? 2 : 1);
-const grade = (p) => (p.h1 - p.h0) / pieceLen(p);
 
 /** Where the piece after p starts: tile, direction and height. */
 export function pieceExit(p) {
@@ -397,18 +395,10 @@ export function pieceSamples(c, i) {
   const cx = p.x + 0.5, cy = p.y + 0.5, dx = DX[p.d], dy = DY[p.d];
   const ex = cx - dx * 0.5, ey = cy - dy * 0.5;
   if (p.t === 'loop') {
-    const nx = -dy, ny = dx;
+    const nx = -dy, ny = dx, L = LOOP_SHAPE;
     for (let k = 0; k <= LOOP_SAMPLES; k++) {
-      const u = k / LOOP_SAMPLES;
-      let a, z;
-      if (u < 0.14) { a = (u / 0.14) * 1; z = 0; }
-      else if (u > 0.86) { a = 1 + (u - 0.86) / 0.14; z = 0; }
-      else {
-        const th = ((u - 0.14) / 0.72) * Math.PI * 2;
-        a = 1 + LOOP_A * Math.sin(th); z = LOOP_R * (1 - Math.cos(th));
-      }
-      const lat = -0.15 * Math.sin(u * Math.PI * 2);
-      out.push({ x: ex + dx * a + nx * lat, y: ey + dy * a + ny * lat, z: p.h0 + z });
+      const lat = L.lat[k];
+      out.push({ x: ex + dx * L.a[k] + nx * lat, y: ey + dy * L.a[k] + ny * lat, z: p.h0 + L.z[k] });
     }
     return out;
   }
@@ -421,34 +411,76 @@ export function pieceSamples(c, i) {
     }
     return out;
   }
-  const ed = exitDir(p), len = pieceLen(p);
-  const mIn = joint(grade(neighbor(c, i, -1)), grade(p)), mOut = joint(grade(p), grade(neighbor(c, i, 1)));
-  const za = p.h0 + (mIn * len) / 3, zb = p.h1 - (mOut * len) / 3;
+  const ed = exitDir(p), L = groundLen(p);
+  const b0 = bend(neighbor(c, i, -1), p), b1 = bend(p, neighbor(c, i, 1));
   if (isWide(p)) {
     const lx = DX[ed], ly = DY[ed];
     for (let s = 0; s <= WIDE_SAMPLES; s++) {
       const t = s / WIDE_SAMPLES, a = (t * Math.PI) / 2, f = WIDE_R * Math.sin(a), g = WIDE_R * (1 - Math.cos(a));
-      out.push({ x: ex + dx * f + lx * g, y: ey + dy * f + ly * g, z: bez(p.h0, za, zb, p.h1, t) });
+      out.push({ x: ex + dx * f + lx * g, y: ey + dy * f + ly * g, z: heightAt(p, t * L, L, b0, b1) });
     }
     return out;
   }
   const qx = cx + DX[ed] * 0.5, qy = cy + DY[ed] * 0.5;
-  const k = isTurn(p) ? 0.276 : 1 / 3;
+  const k = isTurn(p) ? TIGHT_K : 1 / 3;
+  // the height goes by the distance travelled over the ground, so a turn climbs as evenly as a straight
+  const run = RUN;
   for (let s = 0; s <= SAMPLES; s++) {
     const t = s / SAMPLES;
-    out.push({
-      x: bez(ex, ex + dx * k, qx - DX[ed] * k, qx, t),
-      y: bez(ey, ey + dy * k, qy - DY[ed] * k, qy, t),
-      z: bez(p.h0, za, zb, p.h1, t),
-    });
+    const x = bez(ex, ex + dx * k, qx - DX[ed] * k, qx, t), y = bez(ey, ey + dy * k, qy - DY[ed] * k, qy, t);
+    run[s] = s ? run[s - 1] + Math.hypot(x - out[s - 1].x, y - out[s - 1].y) : 0;
+    out.push({ x, y, z: 0 });
   }
+  for (let s = 0; s <= SAMPLES; s++) out[s].z = heightAt(p, (run[s] / run[SAMPLES]) * L, L, b0, b1);
   return out;
 }
-/** Steepness where two pieces meet. Flat where the track changes between up and down, so it never humps above a crest. */
-function joint(a, b) {
-  if (a * b <= 0) return 0;
-  const m = (a + b) / 2;
-  return Math.sign(m) * Math.min(Math.abs(m), 3 * Math.min(Math.abs(a), Math.abs(b)));
+
+// ---------- slopes ----------
+// Where the slope changes from one piece to the next, the bend is rounded over both pieces: each piece
+// runs at its own slope through its middle, and the track curves evenly through the joint. A crest is
+// so lowered and a dip raised a little: at most BEND_DEV levels where the track levels out or gets
+// steeper, and less (HILL_DEV) at the top or bottom of a hill, so short hills keep most of their height.
+// Loops and corkscrews keep their own shape and are level at both ends, so a sloped piece next to one
+// levels out over its own length.
+const BEND_DEV = 0.25, HILL_DEV = 0.15;
+const TIGHT_K = 0.276; // a tight turn's Bezier handles, for a quarter circle half a tile across
+/** Length of a tight turn's centre line over the ground, in tiles. */
+const TIGHT_LEN = (() => {
+  let len = 0, px = 0, py = 0;
+  for (let s = 1; s <= 64; s++) {
+    const t = s / 64, x = bez(0, TIGHT_K, 0.5, 0.5, t), y = bez(0, 0, 0.5 - TIGHT_K, 0.5, t);
+    len += Math.hypot(x - px, y - py); px = x; py = y;
+  }
+  return len;
+})();
+const groundLen = (p) => (isWide(p) ? WIDE_LEN : isTurn(p) ? TIGHT_LEN : isInv(p) ? 2 : 1);
+const RUN = new Float64Array(SAMPLES + 1);
+const NO_BEND = { d: 0, r: 0, held: false }, HELD = { d: 0, r: 0, held: true };
+/** The bend where piece a runs into piece b: d = change of slope (levels per tile), r = how far it reaches into each, in tiles. */
+function bend(a, b) {
+  if (a === b) return NO_BEND; // the open end of a track: it simply carries on
+  if (isInv(a) || isInv(b)) return HELD;
+  const ga = slopeOf(a) / groundLen(a), gb = slopeOf(b) / groundLen(b), d = gb - ga;
+  if (Math.abs(d) < 1e-9) return NO_BEND;
+  const dev = ga * gb < 0 ? HILL_DEV : BEND_DEV;
+  return { d, r: Math.min(groundLen(a) / 2, groundLen(b) / 2, (4 * dev) / Math.abs(d)), held: false };
+}
+/** Height of piece p (levels) at distance s along it over the ground, given the bends at its start (b0) and end (b1). */
+function heightAt(p, s, L, b0, b1) {
+  const g = slopeOf(p) / L;
+  let z = p.h0 + g * s;
+  if (g && (b0.held || b1.held)) {
+    // level where it meets a loop or a corkscrew: an S over the part of the piece that is not rounded off
+    const a = b0.held ? 0 : b0.r, e = b1.held ? L : L - b1.r, w = e - a;
+    if (s > a && s < e) {
+      const t = (s - a) / w, t2 = t * t, t3 = t2 * t;
+      const m0 = b0.held ? 0 : g * w, m1 = b1.held ? 0 : g * w, z0 = p.h0 + g * a, z1 = p.h0 + g * e;
+      z = (2 * t3 - 3 * t2 + 1) * z0 + (t3 - 2 * t2 + t) * m0 + (3 * t2 - 2 * t3) * z1 + (t3 - t2) * m1;
+    }
+  }
+  if (b0.r && s < b0.r) z += (b0.d * (b0.r - s) ** 2) / (4 * b0.r);
+  if (b1.r && L - s < b1.r) z += (b1.d * (b1.r - (L - s)) ** 2) / (4 * b1.r);
+  return z;
 }
 /**
  * Banking at u = 0..1 along piece i: how far the outer rail is lifted, in levels (the inner one drops
@@ -463,6 +495,34 @@ export function bankAt(c, i, u) {
   const k = (same(neighbor(c, i, -1)) && i > 0 ? 1 : ease(u)) * (same(neighbor(c, i, 1)) && (i < c.pieces.length - 1 || c.closed) ? 1 : ease(1 - u));
   return (isLeft(p) ? 1 : -1) * (isWide(p) ? 0.2 : 0.17) * k;
 }
+/**
+ * The shape of a loop, worked out once: a teardrop like on a real looping coaster. The track bends up
+ * gently out of the flat, tightest over the top, and back down the same way. Its heading turns by
+ * 2πσ - LOOP_EASE·sin 2πσ at σ = 0..1 of the way, so the bend grows from almost nothing where it meets
+ * the flat track. Stretched to fill its two tiles and LOOP_H levels. The way up lies to one side and
+ * the way down to the other (lat), easing in and out so the track runs straight on at both ends.
+ * a = tiles along, z = levels up, lat = tiles to the left, at each sample.
+ */
+const LOOP_SHAPE = (() => {
+  const M = 4000, xs = new Float64Array(M + 1), zs = new Float64Array(M + 1), TAU = Math.PI * 2;
+  for (let i = 0; i < M; i++) {
+    const s = (i + 0.5) / M, th = TAU * s - LOOP_EASE * Math.sin(TAU * s);
+    xs[i + 1] = xs[i] + Math.cos(th) / M; zs[i + 1] = zs[i] + Math.sin(th) / M;
+  }
+  let top = 0;
+  for (let i = 0; i <= M; i++) top = Math.max(top, zs[i]);
+  // samples are spaced evenly in a half-eased angle: closer together over the tight top
+  const a = [], z = [], lat = [];
+  let i = 0;
+  for (let k = 0; k <= LOOP_SAMPLES; k++) {
+    const want = (TAU * k) / LOOP_SAMPLES, psi = (s) => TAU * s - (LOOP_EASE / 2) * Math.sin(TAU * s);
+    while (i < M && psi((i + 1) / M) <= want) i++;
+    const s = i / M, ease = Math.min(1, Math.min(s, 1 - s) / 0.12), e = ease * ease * (3 - 2 * ease);
+    a.push((xs[i] / xs[M]) * 2); z.push((zs[i] / top) * LOOP_H); lat.push(-LOOP_W * Math.sin(TAU * s) * e);
+  }
+  a[LOOP_SAMPLES] = 2; z[0] = z[LOOP_SAMPLES] = 0;
+  return { a, z, lat };
+})();
 /** How far a corkscrew has turned (radians) at u = 0..1 along it. Eased so it joins straight track smoothly. */
 export function corkAngle(u) { return Math.PI * 2 * u * u * (3 - 2 * u); }
 
@@ -520,10 +580,15 @@ export function recompute(c) {
     if (p.t === 'station') { gvert = 1; glat = 0; }
     gv[k + 1] = gvert; gl[k + 1] = glat;
     if (vn > maxV) maxV = vn;
-    if (dz < -0.001 && !isInv(p)) drop -= dz;
-    else if (dz > 0.001 && !isInv(p)) { if (drop >= 4) { nDrops++; totalDrop += drop; } bigDrop = Math.max(bigDrop, drop); drop = 0; }
     maxH = Math.max(maxH, Z[k] - base);
     v = vn;
+  }
+  // drops are measured by the heights the track was built to, not by its rounded crests and dips
+  for (let i = 0, end = stall >= 0 ? stall : c.pieces.length - 1; i <= end; i++) {
+    const p = c.pieces[i], dz = (p.h1 - p.h0) * UNIT_M;
+    if (isInv(p) || !dz) continue;
+    if (dz < 0) drop -= dz;
+    else { if (drop >= 4) { nDrops++; totalDrop += drop; } bigDrop = Math.max(bigDrop, drop); drop = 0; }
   }
   if (drop >= 4) { nDrops++; totalDrop += drop; }
   bigDrop = Math.max(bigDrop, drop);
@@ -545,7 +610,8 @@ export function recompute(c) {
     if (sg[k] > maxGv) maxGv = sg[k];
     if (sg[k] < minGv) minGv = sg[k];
     if (sl[k] > maxGl) maxGl = sl[k];
-    if (sg[k] < 0.45 && !p.chain) air += tt[k] - tt[k - 1];
+    // feeling at most 0.6 g counts as airtime: the rounded crests lift riders a little more gently than sharp ones did
+    if (sg[k] < 0.6 && !p.chain) air += tt[k] - tt[k - 1];
   }
   gv.set(sg); gl.set(sl);
   const sim = {

@@ -85,10 +85,10 @@ export function showHelp() {
 
 // ---------- thumbnails ----------
 function thumb(w, h, draw) {
-  const c = document.createElement('canvas');
-  c.width = w * 2; c.height = h * 2;
+  const c = document.createElement('canvas'), k = Math.min(3, Math.max(2, Math.ceil(window.devicePixelRatio || 1)));
+  c.width = w * k; c.height = h * k;
   const ctx = c.getContext('2d');
-  ctx.scale(2, 2);
+  ctx.scale(k, k);
   draw(ctx, w, h);
   return c;
 }

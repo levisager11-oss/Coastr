@@ -114,7 +114,10 @@ function paintPart(ctx, part) {
         const box = part.box || (part.box = partBox(part.L));
         const s = pics.scale;
         if (box) {
-          const w = Math.ceil((box[2] - box[0]) * s), h = Math.ceil((box[3] - box[1]) * s);
+          // the picture's corner sits on a whole device pixel, so it is copied exactly where its paths
+          // would be drawn, and two pieces that meet line up to the pixel
+          const dx = Math.floor(box[0] * s), dy = Math.floor(box[1] * s);
+          const w = Math.ceil(box[2] * s) - dx, h = Math.ceil(box[3] * s) - dy;
           if (w * h > pics.budget) freePics();
           if (w * h <= pics.budget && w > 0 && h > 0) {
             if (pc) dropPic(pc);
@@ -122,24 +125,23 @@ function paintPart(ctx, part) {
             const cv = document.createElement('canvas');
             cv.width = w; cv.height = h;
             const g = cv.getContext('2d');
-            g.setTransform(s, 0, 0, s, -box[0] * s, -box[1] * s);
+            g.setTransform(s, 0, 0, s, -dx, -dy);
             g.lineJoin = 'round';
             paint(g, part.L);
-            pc = part.pic = { key, cv, box, gen: pics.gen, used: pics.frame };
+            pc = part.pic = { key, cv, dx, dy, s, gen: pics.gen, used: pics.frame };
             pics.live.push(pc);
           }
         }
       }
     }
     if (pc) {
-      const b = pc.box;
       pc.used = pics.frame;
-      if (pics.scale === px.a && pc.gen === pics.gen) {
-        // made at this very scale: copy it pixel for pixel
+      if (pc.s === px.a) {
+        // made at this very scale: copy it pixel for pixel (px.e and px.f are whole pixels)
         ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.drawImage(pc.cv, Math.round(b[0] * px.a + px.e), Math.round(b[1] * px.a + px.f));
+        ctx.drawImage(pc.cv, pc.dx + px.e, pc.dy + px.f);
         ctx.setTransform(px.a, 0, 0, px.a, px.e, px.f);
-      } else ctx.drawImage(pc.cv, b[0], b[1], b[2] - b[0], b[3] - b[1]);
+      } else ctx.drawImage(pc.cv, pc.dx / pc.s, pc.dy / pc.s, pc.cv.width / pc.s, pc.cv.height / pc.s);
       return;
     }
   }
@@ -174,8 +176,14 @@ function buildGeo(c, pi) {
   // A frame at every sample, in metres: the middle between the rails, the direction to the left rail
   // (leaning with banking, rolling in a corkscrew) and "up" as the riders feel it.
   const F = new Float64Array(n * 9);
+  // At the two ends the direction is taken across the joint, from the samples of the pieces before and
+  // after: both pieces then work out the very same frame there, and their rails and spines meet exactly.
+  const np = c.pieces.length, nb = (j) => (j >= 0 && j < np ? j : c.closed && np > 1 ? (j + np) % np : -1);
+  const ip = nb(pi - 1), inx = nb(pi + 1);
+  const before = ip >= 0 && ip !== pi ? pieceSamples(c, ip) : null, after = inx >= 0 && inx !== pi ? pieceSamples(c, inx) : null;
   for (let k = 0; k < n; k++) {
-    const a = sm[Math.max(0, k - 1)], b = sm[Math.min(last, k + 1)], s = sm[k], u01 = k / last;
+    const a = k === 0 && before ? before[before.length - 2] : sm[Math.max(0, k - 1)];
+    const b = k === last && after ? after[1] : sm[Math.min(last, k + 1)], s = sm[k], u01 = k / last;
     let tx = (b.x - a.x) * 4, ty = (b.y - a.y) * 4, tz = (b.z - a.z) * 2;
     // at the two ends the rails point exactly along the grid, so they meet the next piece without a notch
     if (!inv && (k === 0 || k === last)) { const h = Math.hypot(tx, ty), dd = k ? ed : d; tx = DX[dd] * h; ty = DY[dd] * h; }
@@ -456,7 +464,10 @@ function buildGeo(c, pi) {
       P(kb, 0, SP - 0.15);
       const bx = qx, by = qy;
       for (const sd of [1, -1]) {
-        const s = sd === nearSide ? near : far, fx = mx + lnx * sd * 0.42, fy = my + lny * sd * 0.42;
+        // no leg stands on a path, a bridge or scenery: it steps out further to the side, or is left out
+        const s = sd === nearSide ? near : far, off = [0.42, 0.95, 1.45].find((o) => !busy(mx + lnx * sd * o, my + lny * sd * o));
+        if (off === undefined) continue;
+        const fx = mx + lnx * sd * off, fy = my + lny * sd * off;
         const g = foot(s, fx, fy, 5.6), x = gx(fx, fy), y = gy(fx, fy, g);
         beam(s, x, y, bx, by, 3.4); beam(s, x, y, ax, ay, 4.4);
       }
@@ -465,6 +476,7 @@ function buildGeo(c, pi) {
     const A = mkPart(0, h, firstNear ? null : (L) => flush(L, far), firstNear ? (L) => flush(L, near) : null);
     const B = mkPart(h, last, firstNear ? (L) => flush(L, far) : null, firstNear ? null : (L) => flush(L, near));
     out.parts = firstNear ? [{ cell: -1, L: B }, { cell: -1, L: A }] : [{ cell: -1, L: A }, { cell: -1, L: B }];
+    out.farHalf = firstNear ? 1 : 0; // the half drawn first: 0 = the way up (first half of the samples), 1 = the way down
   } else if (wide || cork) {
     // which stretch of the piece lies on which tile, so each tile draws its own part in the right order
     const ranges = new Map();
@@ -479,7 +491,7 @@ function buildGeo(c, pi) {
       const ka = Math.round(last / 3), kb = last - ka, zTop = p.h0 + 3.05, cols = [];
       for (const [k, sd] of [[ka, 1], [kb, -1]]) {
         const s = sm[k], xt = s.x + lnx * sd * 0.17, yt = s.y + lny * sd * 0.17;
-        cols.push({ k, sd, xt, yt, x: gx(xt, yt), y: gy(xt, yt, zTop) });
+        cols.push({ k, sd, xt, yt, x: gx(xt, yt), y: gy(xt, yt, zTop), up: !busy(xt, yt) && zTop - ground(xt, yt) >= 0.3 });
       }
       frame = (k0, k1, isNear) => (L) => {
         const s = supSet();
@@ -489,8 +501,8 @@ function buildGeo(c, pi) {
           P(q.k, 0, SP - 0.1);
           beam(s, q.x, qy, qx, qy, 3.2);
         }
-        // the beam goes with the tile nearer to the viewer, where it is drawn last
-        if (isNear && (DX[d] + DY[d] > 0 ? k1 === last : k0 === 0)) {
+        // the beam goes with the tile nearer to the viewer, where it is drawn last; only if both columns stand
+        if (isNear && cols[0].up && cols[1].up && (DX[d] + DY[d] > 0 ? k1 === last : k0 === 0)) {
           beam(s, cols[0].x, cols[0].y, cols[1].x, cols[1].y, 3.6);
           P(last / 2, 0, SP);
           beam(s, qx, (cols[0].y + cols[1].y) / 2, qx, qy, 2.6);
@@ -511,17 +523,27 @@ function buildGeo(c, pi) {
   return out;
 }
 
-/** Draws one piece, or only the part of it that lies on tile `cell`. */
-export function drawPiece(ctx, c, pi, alpha, cell) {
+/** Draws one piece, or only the part of it that lies on tile `cell`, or only its part number `only`. */
+export function drawPiece(ctx, c, pi, alpha, cell, only) {
   const p = c.pieces[pi];
   let g = p.geo;
   if (!geoFresh(g)) g = p.geo = buildGeo(c, pi);
   if (alpha !== undefined) ctx.globalAlpha = alpha;
   ctx.lineJoin = 'round';
   const parts = g.parts, one = g.split && cell !== undefined;
-  for (let i = 0; i < parts.length; i++) if (!one || parts[i].cell === cell) (c.id ? paintPart : paintAll)(ctx, parts[i]);
+  for (let i = 0; i < parts.length; i++) {
+    if ((one && parts[i].cell !== cell) || (only !== undefined && i !== only)) continue;
+    (c.id ? paintPart : paintAll)(ctx, parts[i]);
+  }
   ctx.lineCap = 'round';
   if (alpha !== undefined) ctx.globalAlpha = 1;
+}
+
+/** Which half of a loop is drawn first (behind the other): 0 = the way up, 1 = the way down. */
+export function loopFarHalf(c, pi) {
+  const p = c.pieces[pi];
+  if (!geoFresh(p.geo)) p.geo = buildGeo(c, pi);
+  return p.geo.farHalf || 0;
 }
 
 // A station tile. `base` is drawn before the train: the platform, the trough the train runs in and what
@@ -851,9 +873,12 @@ export function coasterThumb(ctx, ctype, w, h) {
   const c = { ctype, closed: false, pieces: [] };
   const mk = (x, h0, h1, t = 's') => ({ t, x, y: 0, d: 0, h0, h1, chain: false, bank: false });
   c.pieces.push(mk(0, 0, 1), mk(1, 1, 2), mk(2, 2, 1), mk(3, 1, 0));
+  // The drawing covers about x -24..124 and y -8..76. It fills the height; up to a third wider than the
+  // picture, its two ends then fade out instead of being cut off. A small icon shows the crest with the car.
+  const small = h < 40, sc = small ? (h - 2) / 50 : Math.min((h - 2) / 84, (w * 1.35) / 148);
   ctx.save();
-  ctx.translate(w / 2 - 34, h / 2 - 12);
-  ctx.scale(0.62, 0.62);
+  ctx.translate(w / 2 - (small ? 60 : 50) * sc, h / 2 - (small ? 20 : 34) * sc);
+  ctx.scale(sc, sc);
   const keep = { h: S.h, water: S.water, fine };
   fine = true;
   S.h = S.h || new Uint8Array(N * N); S.water = S.water || new Uint8Array(N * N);
@@ -867,4 +892,9 @@ export function coasterThumb(ctx, ctype, w, h) {
   S.h = keep.h || S.h; S.water = keep.water || S.water;
   fine = keep.fine;
   ctx.restore();
+  if (148 * sc > w) {
+    const f = ctx.createLinearGradient(0, 0, w, 0), e = small ? 0.16 : Math.min(0.2, (148 * sc - w) / (2 * w) + 0.06);
+    f.addColorStop(0, 'rgba(0,0,0,0)'); f.addColorStop(e, '#000'); f.addColorStop(1 - e, '#000'); f.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.save(); ctx.globalCompositeOperation = 'destination-in'; ctx.fillStyle = f; ctx.fillRect(0, 0, w, h); ctx.restore();
+  }
 }
