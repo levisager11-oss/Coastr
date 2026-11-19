@@ -303,6 +303,10 @@ Durable Object per room, at `wss://coastr-rooms.levisager.workers.dev` (`RELAY` 
   everything is drawn as shapes. `look.pics = false` switches the track and guest pictures off.
 - Track paths are `BPath` (a `Path2D` that records its bounds) so a part knows its picture's size.
   Anything that changes how a piece looks must clear `piece.geo` (colour changes already do).
+- A fence joins up with the fences on the tiles round it: the renderer passes `drawScenery` which
+  neighbours are fences (`nb`), and each combination gets a stamp of its own. New scenery that does
+  not move belongs in `STILL` in `render.js` (and in `LIT` if it has a lit look at night); scenery
+  that moves (`clock`, `windmill`, `fountain`, `flag`, `torch`) must stay out of it.
 - Rides and stalls are still drawn as shapes every frame because they move; they are now the
   largest part of a frame.
 - Tried and dropped: keeping each ride as its own picture refreshed every few frames. Uploading the

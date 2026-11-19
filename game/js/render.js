@@ -636,10 +636,12 @@ export function render(ctx, time, ui) {
     const sc = S.scn[i];
     if (S.lit[i] && fine) drawLitter(ctx, x, y, i, S.lit[i]);
     if (sc) {
+      // a fence joins up with the fences on the tiles round it: 1 = at x - 1, 2 = x + 1, 4 = y - 1, 8 = y + 1
+      const nb = sc === SCN.fence ? (x > 0 && S.scn[i - 1] === sc ? 1 : 0) | (x + 1 < N && S.scn[i + 1] === sc ? 2 : 0) | (y > 0 && S.scn[i - N] === sc ? 4 : 0) | (y + 1 < N && S.scn[i + N] === sc ? 8 : 0) : undefined;
       if (!STILL[sc]) drawScenery(ctx, sc, sx, sy + HH, time, hash(x, y));
-      else if (stamp) stampScenery(ctx, sc, sx, sy + HH, hash(x, y), dark > 0.3);
-      else drawScenery(ctx, sc, sx, sy + HH, time, stampHash(hash(x, y))); // the same look as its picture
-      if (dark > 0.05 && (sc === SCN.lamp || sc === SCN.torch)) lights.push(sx, sy + HH - 30, sc === SCN.lamp ? 78 : 58 + Math.sin(time * 9 + x) * 5, 0);
+      else if (stamp) stampScenery(ctx, sc, sx, sy + HH, hash(x, y), dark > 0.3, nb);
+      else drawScenery(ctx, sc, sx, sy + HH, time, stampHash(hash(x, y)), nb); // the same look as its picture
+      if (dark > 0.05 && (sc === SCN.lamp || sc === SCN.torch || sc === SCN.lantern)) lights.push(sx, sy + HH - 30, sc === SCN.lamp ? 78 : sc === SCN.lantern ? 64 : 58 + Math.sin(time * 9 + x) * 5, 0);
     }
     let roofs = null;
     if (S.trk.has(i)) {
@@ -760,9 +762,10 @@ export function render(ctx, time, ui) {
 
 // Scenery that does not move (apart from a gentle sway) can be stamped from a picture made once, which
 // is much cheaper than drawing its shapes again every frame. Four pictures per kind cover the size variety.
-const STILL = SCENERY.map((d) => !!d && ['oak', 'pine', 'snowpine', 'palm', 'cactus', 'bush', 'hedge', 'topiary', 'flowers', 'rock', 'bench', 'picnic', 'statue', 'snowman', 'lamp'].includes(d.id));
-// lamps get two pictures: by day, and lit at night
-const LIT = SCENERY.map((d) => !!d && d.id === 'lamp');
+const STILL = SCENERY.map((d) => !!d && ['oak', 'pine', 'snowpine', 'palm', 'cactus', 'bush', 'hedge', 'topiary', 'flowers', 'rock', 'bench', 'picnic', 'statue', 'snowman', 'lamp',
+  'birch', 'cherry', 'maple', 'tulips', 'planter', 'bin', 'gazebo', 'mushroom', 'lantern', 'fence'].includes(d.id));
+// lamps and lanterns get two pictures: by day, and lit at night
+const LIT = SCENERY.map((d) => !!d && (d.id === 'lamp' || d.id === 'lantern'));
 // The pictures are made at the screen's own scale (stampScale, set once the zoom has settled), so
 // stamping is a plain copy rather than shrinking a big picture every time.
 const stamps = new Map();
@@ -771,8 +774,9 @@ let stampScale = 1;
 // Still scenery comes in four looks per kind (size, colours, apples...): the same four whether it is
 // drawn from its picture or as shapes, so nothing changes when the zoom or the picture quality does.
 const stampHash = (hsh) => (Math.min(3, (hsh * 4) | 0) + 0.5) / 4;
-function stampScenery(ctx, code, cx, cy, hsh, lit) {
-  const b = Math.min(3, (hsh * 4) | 0), key = (code * 4 + b) * 2 + (lit && LIT[code] ? 1 : 0);
+// (nb: which neighbours a fence joins up with; each combination is a picture of its own)
+function stampScenery(ctx, code, cx, cy, hsh, lit, nb) {
+  const b = Math.min(3, (hsh * 4) | 0), key = ((code * 4 + b) * 2 + (lit && LIT[code] ? 1 : 0)) * 16 + (nb || 0);
   let c = stamps.get(key);
   if (c === undefined || (c && c.s !== stampScale)) {
     if (typeof document !== 'undefined') {
@@ -780,12 +784,12 @@ function stampScenery(ctx, code, cx, cy, hsh, lit) {
       cv.width = Math.ceil(72 * s); cv.height = Math.ceil(88 * s);
       const g = cv.getContext('2d');
       g.setTransform(s, 0, 0, s, 0, 0);
-      drawScenery(g, code, 36, 72, 0, (b + 0.5) / 4);
+      drawScenery(g, code, 36, 72, 0, (b + 0.5) / 4, nb);
       c = { cv, s };
     } else c = null;
     stamps.set(key, c);
   }
-  if (!c) drawScenery(ctx, code, cx, cy, 0, stampHash(hsh));
+  if (!c) drawScenery(ctx, code, cx, cy, 0, stampHash(hsh), nb);
   else if (c.s === px.a) blit(ctx, c.cv, cx - 36, cy - 72);
   else ctx.drawImage(c.cv, cx - 36, cy - 72, 72, 88);
 }

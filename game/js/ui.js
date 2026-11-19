@@ -831,7 +831,8 @@ export function closePanel() {
   panel = null; ui.sel = null;
   if (els.panel) { els.panel.hidden = true; els.hud.classList.remove('has-panel'); }
 }
-const head = (title) => `<div class="p-head"><h2>${esc(title)}</h2><button class="x" data-act="close" aria-label="${esc(t('close'))}">${icon('close')}</button></div>`;
+// (tabs, if any, stay in view with the title while the panel scrolls)
+const head = (title, tabs = '') => `<div class="p-head"><h2>${esc(title)}</h2><button class="x" data-act="close" aria-label="${esc(t('close'))}">${icon('close')}</button>${tabs}</div>`;
 const meter = (k, label) => `<div class="meter"><span>${esc(label)}</span><div class="bar"><i data-w="${k}"></i></div><em data-k="${k}"></em></div>`;
 const word = (v) => t(v < 2.5 ? 'r_low' : v < 5 ? 'r_medium' : v < 7.5 ? 'r_high' : v < 10 ? 'r_vhigh' : 'r_extreme');
 const fact = (k, label) => `<div>${esc(label)}<b data-k="${k}"></b></div>`;
@@ -919,7 +920,7 @@ function panelHTML() {
   if (p.type === 'goals') {
     const goals = goalsOf(), SC = SCENARIOS[S.sc] || SCENARIOS.meadows;
     let h = head(t('sc_' + S.sc)) + '<div class="p-body">';
-    h = head(t('sc_' + S.sc)) + hub('goals') + '<div class="p-body">';
+    h = head(t('sc_' + S.sc), hub('goals')) + '<div class="p-body">';
     if (!S.sandbox) h += `<div class="stars big">${starsHTML(S.stars || 0)}</div>`;
     h += `<div class="note" data-show="event" data-k="event"></div>`;
     h += `<div class="facts">${fact('guests', t('guests'))}${fact('rating', t('rating'))}${fact('peak', t('p_peak'))}${fact('value', t('f_value'))}${fact('awards', t('awards'))}${fact('year', t('year_guests'))}</div>`;
@@ -935,13 +936,13 @@ function panelHTML() {
   if (p.type === 'park') {
     const row = (o) => `<li data-act="go" data-id="${o.id}"><span class="dot" data-k="d${o.id}"></span><span class="nm2">${esc(objName(o))}</span><span class="cnt" data-k="q${o.id}"></span><span class="cnt inc" data-k="i${o.id}"></span></li>`;
     const all = Object.values(S.objs), rides = all.filter((o) => o.kind !== 'stall'), stalls = all.filter((o) => o.kind === 'stall');
-    return head(t('park_map')) + hub('park') + `<div class="p-body"><canvas class="minimap" data-act="map" width="552" height="300"></canvas>
+    return head(t('park_map'), hub('park')) + `<div class="p-body"><canvas class="minimap" data-act="map" width="552" height="300"></canvas>
       <div class="btns"><button class="btn flat" data-act="entrance">${esc(t('to_entrance'))}</button></div>
       <h3>${esc(t('t_rides'))}</h3><ul class="list rides">${rides.map(row).join('') || `<li>${esc(t('list_none'))}</li>`}</ul>
       ${stalls.length ? `<h3>${esc(t('t_stalls'))}</h3><ul class="list rides">${stalls.map(row).join('')}</ul>` : ''}</div>`;
   }
   if (p.type === 'staff') {
-    let h = head(t('staff')) + hub('staff') + `<div class="p-body"><div class="hint" style="margin-top:0">${esc(t('staff_intro'))}</div>`;
+    let h = head(t('staff'), hub('staff')) + `<div class="p-body"><div class="hint" style="margin-top:0">${esc(t('staff_intro'))}</div>`;
     for (const k of STAFF_ORDER) {
       h += `<div class="staff"><div><b>${esc(t('st_' + k))}</b><span>${esc(t('std_' + k))}</span><em>${esc(t('st_wage', money(STAFF[k].wage)))}</em></div>
         <div class="stepper"><button data-act="fire:${k}" aria-label="-">−</button><b data-k="n_${k}"></b><button data-act="hire:${k}" aria-label="+">+</button></div></div>`;
@@ -953,7 +954,7 @@ function panelHTML() {
     return h + '</div>';
   }
   if (p.type === 'tasks') {
-    let h = head(t('tasks')) + hub('tasks') + '<div class="p-body">';
+    let h = head(t('tasks'), hub('tasks')) + '<div class="p-body">';
     if (S.sandbox) return h + `<div class="note">${esc(t('ch_sandbox'))}</div></div>`;
     const C = S.ch, c = C.cur;
     h += `<div class="hint" style="margin-top:0">${esc(t('ch_intro'))}</div>`;
