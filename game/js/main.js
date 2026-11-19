@@ -1,11 +1,12 @@
 // Start-up, main menu, the game loop, saving, and the Toki hooks.
-import { S, newGame, serialize, deserialize, events, parkValue, idx, previewMap, saveMap } from './world.js';
+import { S, newGame, serialize, deserialize, events, parkValue, idx, previewMap, saveMap, net } from './world.js';
 import { tick, initAfterLoad } from './sim.js';
 import { render, cam, view, look, isoX, isoY, toScreen, mapThumb } from './render.js';
 import {
   ui, initUI, resetUI, buildHUD, refreshHUD, handleEvents, moveCamera, centerOn, toast, dialog, showHelp, updateTestHud, closePanel,
-  starsHTML, updateSounds,
+  starsHTML, updateSounds, closeDialog, refreshRoom, openPanel,
 } from './ui.js';
+import { room, hostRoom, joinRoom, leaveRoom, netTick, shareEvents, setNetHooks, cleanCode, renameMe } from './net.js';
 import { SCENARIOS, SCENARIO_ORDER, DAY_LEN, MONTH_DAYS } from './data.js';
 import { updateFx, clearFx } from './fx.js';
 import { t, setLang, detectLang, lang, money, num } from './i18n.js';
@@ -36,8 +37,8 @@ const demoUi = { ghost: null, sel: null, editing: 0, follow: 0 };
 // ---------- storage ----------
 function store(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch (e) { return false; } }
 function load(key) { try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
-const settings = Object.assign({ lang: detectLang(), music: true, sfx: true, night: true }, load(KEY.settings) || {});
-function saveSettings() { store(KEY.settings, { lang, music: audio.music, sfx: audio.sfx, night: look.night }); }
+const settings = Object.assign({ lang: detectLang(), music: true, sfx: true, night: true, name: '' }, load(KEY.settings) || {});
+function saveSettings() { store(KEY.settings, { lang, music: audio.music, sfx: audio.sfx, night: look.night, name: settings.name }); }
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 function saveGame(show) {
   if (!playing || !curKey) return;
@@ -92,10 +93,12 @@ function parkThumb(p) {
   return c;
 }
 /** Ask for a park name. Resolves to the new name, or null when cancelled. */
-async function askName(cur) {
-  const p = dialog(`<h2>${esc(t('park_name'))}</h2><p>${esc(t('park_name_q'))}</p>
-    <input class="name-in" type="text" maxlength="24" value="${esc(cur)}" autocomplete="off" spellcheck="false" enterkeyhint="done">`,
-  [{ label: t('b_cancel'), value: 0 }, { label: t('ok'), cls: 'yellow', value: 1 }]);
+const askName = (cur) => askText(t('park_name'), t('park_name_q'), cur, 24);
+/** Ask for a line of text in a dialog. Resolves to it (trimmed), or null when cancelled. */
+async function askText(title, q, cur, max, cls = '', okLabel = t('ok')) {
+  const p = dialog(`<h2>${esc(title)}</h2><p>${esc(q)}</p>
+    <input class="name-in ${cls}" type="text" maxlength="${max}" value="${esc(cur)}" autocomplete="off" spellcheck="false" enterkeyhint="done">`,
+  [{ label: t('b_cancel'), value: 0 }, { label: okLabel, cls: 'yellow', value: 1 }]);
   const inp = document.querySelector('#modal .name-in');
   if (inp) {
     inp.addEventListener('keydown', (e) => {
@@ -107,7 +110,7 @@ async function askName(cur) {
     setTimeout(() => { try { inp.focus(); inp.select(); } catch (e) { /* ignore */ } }, 30);
   }
   const a = await p;
-  return a === 1 && inp ? inp.value.replace(/\s+/g, ' ').trim().slice(0, 24) : null;
+  return a === 1 && inp ? inp.value.replace(/\s+/g, ' ').trim().slice(0, max) : null;
 }
 function parksFull() {
   if (parks().length < MAX_PARKS) return false;
@@ -249,6 +252,7 @@ function buildMenu() {
     ${lp ? `<div class="m-top"><button class="m-btn main" data-m="continue"><b>${t('m_continue')}</b><span>${esc(nameOf(lp.d))}${lp.d.mode === 'sandbox' ? ' · ' + t('m_sandbox') : ''}</span></button>
       <button class="m-btn parks" data-m="parks"><b>${icon('folder')}${t('m_parks')}</b><span>${t('m_parks_n', all.length, MAX_PARKS)}</span></button></div>` : ''}
     <div class="m-scs">${cards}</div>
+    <div class="m-row"><button class="btn blue" data-m="join">${icon('people')}${t('mp_join')}</button></div>
     <div class="m-row">
       <button class="btn" data-m="help">${icon('help')}${t('m_help')}</button>
       <button class="btn" data-m="lang">${icon('globe')}${t('lang_name')}</button>
@@ -295,6 +299,7 @@ menuEl.addEventListener('click', async (e) => {
   else if (act === 'lang') hooks.lang();
   else if (act === 'music') { hooks.music(); buildMenu(); }
   else if (act === 'sfx') { hooks.sfx(); buildMenu(); }
+  else if (act === 'join') joinFriend();
   else if (act === 'continue') { const p = lastPark(); if (p) startGame(p.d.mode, false, scOf(p.d), p.key); }
   else if (act === 'parks') { menuView = 'parks'; buildMenu(); menuEl.scrollTop = 0; }
   else if (act === 'back') { menuView = 'main'; buildMenu(); }
@@ -337,14 +342,16 @@ menuEl.addEventListener('click', async (e) => {
 /** Start or continue a park. sc = scenario id (the map); the first one is the original career.
  *  key = the saved park to load; without it the latest park of that mode and map is continued.
  *  A fresh park always gets a new slot, and so does a save that will not load (it is kept as it is). */
-function startGame(mode, fresh, sc = 'meadows', key = null) {
-  if (!fresh && !key) { const p = parksOf(mode, sc)[0]; key = p ? p.key : null; }
-  const saved = !fresh && key ? load(key) : null;
+function startGame(mode, fresh, sc = 'meadows', key = null, data = null) {
+  if (!fresh && !key && !data) { const p = parksOf(mode, sc)[0]; key = p ? p.key : null; }
+  // data: a park handed over whole (a friend's park when joining them); key is then where our copy goes, or null for none
+  const saved = data || (!fresh && key ? load(key) : null);
   let ok = false;
   if (saved) {
     try { deserialize(saved); ok = true; } catch (e) { ok = false; }
   }
-  if (!ok) { newGame(mode, sc); key = newKey(); }
+  if (!ok && !data) { newGame(mode, sc); key = newKey(); }
+  else if (!ok) { newGame(mode, sc); key = null; } // a friend's park that will not load: never write over our copy
   curKey = key; saveWarned = false;
   initAfterLoad();
   S.speed = 1;
@@ -355,11 +362,11 @@ function startGame(mode, fresh, sc = 'meadows', key = null) {
   resetUI();
   cam.zoom = view.w < 600 ? 0.8 : 1;
   centerOn(S.ent.x + 0.5, S.ent.y - 6, S.h[idx(S.ent.x, S.ent.y - 6)] || 2);
-  progress.last = { key, mode: S.mode, sc: S.sc };
-  store(KEY.progress, progress);
+  if (key) { progress.last = { key, mode: S.mode, sc: S.sc }; store(KEY.progress, progress); }
   saveGame(false);
 }
 function toMenu() {
+  if (net.on) { leaveRoom(); tokiRoom(null); refreshRoom(); }
   saveGame(false); sendScores(); noteStars();
   playing = false; curKey = null; menuView = 'main';
   hudEl.hidden = true; menuEl.hidden = false;
@@ -370,6 +377,97 @@ function toMenu() {
   buildMenu();
 }
 function demoView() { cam.zoom = view.w < 600 ? 0.75 : 1.05; centerOn(S.ent.x, S.ent.y - 12, 2); }
+
+// ---------- playing together ----------
+function tokiRoom(code) {
+  try { if (window.toki && window.toki.room) window.toki.room(code); } catch (e) { /* invites are a bonus */ }
+}
+/** This player's name for the others; asked for the first time (or when force). Null when cancelled. */
+async function myName(force) {
+  if (settings.name && !force) return settings.name;
+  const v = await askText(t('mp_name'), t('mp_name_q'), settings.name || t('mp_name_def'), 16);
+  if (v === null) return null;
+  settings.name = v || t('mp_name_def');
+  saveSettings();
+  return settings.name;
+}
+/** A "please wait" dialog. Its .off turns true if the player cancels it. */
+function waitBox(key) {
+  const job = { off: false };
+  dialog(`<h2>${esc(t('mp_title'))}</h2><p>${esc(t(key))}</p>`, [{ label: t('b_cancel'), value: 0 }]).then((v) => { if (v !== 'auto') job.off = true; });
+  return job;
+}
+function netError(e) {
+  const why = e && (e.message === 'noroom' || e.message === 'full') ? e.message : 'net';
+  dialog(`<h2>${esc(t('mp_title'))}</h2><p>${esc(t('mp_err_' + why))}</p>`, [{ label: t('ok'), cls: 'yellow', value: 1 }]);
+}
+/** Open a room for the park being played, or show it if it is open. */
+async function shareRoom() {
+  if (net.on) { openPanel('room'); return; }
+  if (!playing) return;
+  const name = await myName();
+  if (name === null || !playing || net.on) return;
+  const job = waitBox('mp_opening');
+  try {
+    const code = await hostRoom(name);
+    if (job.off || !playing) { leaveRoom(); refreshRoom(); return; }
+    closeDialog();
+    tokiRoom(code); refreshRoom(); openPanel('room');
+  } catch (e) { if (!job.off) netError(e); }
+}
+/** Join a friend's park by its room code (asked for when not given). */
+async function joinFriend(code) {
+  if (net.on) return;
+  if (!code) {
+    const v = await askText(t('mp_join'), t('mp_join_q'), '', 8, 'code-in', t('b_join'));
+    if (v === null) return;
+    code = cleanCode(v);
+    if (code.length < 4) { netError(new Error('noroom')); return; }
+  }
+  const name = await myName();
+  if (name === null) return;
+  const job = waitBox('mp_joining');
+  try {
+    await joinRoom(code, name); // the park arrives in joinedPark
+    if (job.off) { toMenu(); return; }
+    closeDialog();
+    tokiRoom(code);
+  } catch (e) { if (!job.off) netError(e); }
+}
+/** The host's park has arrived: play our copy of it, kept in a slot of its own. */
+function joinedPark(m) {
+  const d = m.d, id = String(m.park || '').replace(/[^A-Za-z0-9]/g, '').replace(/^m+/, '').slice(0, 24) || 'x';
+  const key = SAVE + 'm' + id, prev = load(key), keep = !!prev || parks().length < MAX_PARKS;
+  if (playing) { saveGame(false); playing = false; }
+  startGame(d.mode, false, scOf(d), keep ? key : null, d);
+  // scores and achievements are sent for this player's own copy
+  S.sentValue = prev ? prev.sentValue || 0 : 0; S.sentGuests = prev ? prev.sentGuests || 0 : 0;
+  S.speed = typeof m.speed === 'number' ? m.speed : 1;
+  saveGame(false);
+  if (!keep) toast(t('mp_nosave'), 'bad');
+  refreshRoom();
+}
+function roomEnded(why, guest) {
+  tokiRoom(null); refreshRoom();
+  if (!playing) return;
+  if (!guest) { toast(t('mp_lost_host'), 'bad'); return; }
+  saveGame(false);
+  dialog(`<h2>${esc(t('mp_over'))}</h2><p>${esc(t(why === 'host' ? 'mp_host_left' : 'mp_lost'))}</p><p>${esc(t(curKey ? 'mp_kept' : 'mp_notkept'))}</p>`,
+    [{ label: t('s_menu'), value: 0 }, { label: t('mp_keep'), cls: 'yellow', value: 1 }]).then((a) => { if (a === 0 && playing) toMenu(); });
+}
+async function askLeave() {
+  const host = net.slot === 0;
+  return (await dialog(`<h2>${esc(t('mp_title'))}</h2><p>${esc(t(host ? 'mp_close_q' : 'mp_leave_q'))}</p>`,
+    [{ label: t('b_cancel'), value: 0 }, { label: t(host ? 'mp_close' : 'mp_leave'), cls: 'red', value: 1 }])) === 1;
+}
+setNetHooks({
+  full: joinedPark,
+  end: roomEnded,
+  join: (m) => { if (playing) { toast(t('mp_in', m.name), 'good'); sfx('unlock'); } },
+  leave: (m) => { if (playing && m.name) toast(t('mp_out', m.name)); },
+  players: refreshRoom,
+  parkId: () => (curKey ? curKey.slice(SAVE.length) : 'x' + Date.now().toString(36)),
+});
 
 // Coaster designs the player saved, shared by all parks (the newest eight are kept).
 const KEY_DZ = 'coastr.designs';
@@ -389,7 +487,13 @@ const hooks = {
     S.name = v === t('sc_' + S.sc) ? '' : v;
     saveGame(false);
   },
-  tomenu: toMenu,
+  async tomenu() { if (net.on && !(await askLeave())) return; if (playing) toMenu(); },
+  together: shareRoom,
+  async leave() {
+    if (!net.on || !(await askLeave()) || !net.on) return;
+    if (net.slot === 0) { leaveRoom(); tokiRoom(null); refreshRoom(); closePanel(); } else toMenu();
+  },
+  async renameMe() { const v = await myName(true); if (v && net.on) renameMe(v); },
   month() { saveGame(false); sendScores(); },
   night() { look.night = !look.night; saveSettings(); },
   star() { saveGame(false); noteStars(); sfx('goal'); },
@@ -409,10 +513,12 @@ function frame(now) {
       const steps = sp >= 4 ? 2 : 1;
       for (let i = 0; i < steps; i++) tick((dt * sp) / steps);
     }
+    netTick(dt);
     moveCamera(dt);
     updateFx(dt, cam.x, cam.y, view.w / cam.zoom);
     updateSounds(dt);
     render(ctx, now / 1000, ui);
+    shareEvents(events);
     handleEvents();
     updateTestHud();
     uiAcc += dt; saveAcc += dt;
@@ -445,4 +551,27 @@ buildDemo(); events.length = 0;
 demoView();
 buildMenu();
 requestAnimationFrame(frame);
-window.__coastr = { S, ui, cam, look, startGame, hooks, at: (x, y) => toScreen(isoX(x + 0.5, y + 0.5), isoY(x + 0.5, y + 0.5, S.h[idx(x, y)])) }; // handy for testing in the browser console
+// Toki: a friend's invite opens the game with ?room=CODE; "Invite friends" before a room is open asks us to open one
+const invite = cleanCode(new URLSearchParams(location.search).get('room') || '');
+if (invite.length >= 4) setTimeout(() => joinFriend(invite), 300);
+let tokiHooked = false;
+function hookToki() {
+  if (tokiHooked) return;
+  try {
+    if (!window.toki || !window.toki.onHost) return;
+    tokiHooked = true;
+    window.toki.onHost(() => {
+      if (net.on) return;
+      if (!playing) {
+        const p = lastPark();
+        if (p) startGame(p.d.mode, false, scOf(p.d), p.key);
+        else if (!parksFull()) startGame('sandbox', true, 'meadows');
+        else return;
+      }
+      shareRoom();
+    });
+  } catch (e) { /* invites are a bonus */ }
+}
+hookToki();
+window.addEventListener('load', hookToki);
+window.__coastr = { S, ui, cam, look, startGame, hooks, net, room, at: (x, y) => toScreen(isoX(x + 0.5, y + 0.5), isoY(x + 0.5, y + 0.5, S.h[idx(x, y)])) }; // handy for testing in the browser console

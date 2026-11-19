@@ -14,10 +14,13 @@ python3 -m http.server 8000 --directory game
 ```
 
 - There is no automated test suite in the repository. Verify changes by running the game.
-- `world.js`, `coaster.js`, `guests.js`, `sim.js` and `data.js` never touch the DOM, so they can be
-  imported in Node to build a park in code, call `tick(dt)` and inspect the result. Use this for
-  balance and save/load checks.
-- In the browser, `window.__coastr` exposes `S` (state), `ui`, `cam`, `look`, `startGame(mode, fresh, scenario)`
+- `world.js`, `coaster.js`, `guests.js`, `sim.js`, `data.js`, `sync.js` and `net.js` never touch the
+  DOM, so they can be imported in Node to build a park in code, call `tick(dt)` and inspect the
+  result. Use this for balance and save/load checks. Node 22 has `WebSocket`, so playing together
+  can be tested against the real relay: run each player in its own `worker_threads` Worker (each
+  gets its own copy of the modules and of `S`), call `hostRoom` / `joinRoom`, then `tick` and
+  `netTick` on a timer.
+- In the browser, `window.__coastr` exposes `S` (state), `ui`, `cam`, `look`, `net`, `room`, `hooks`, `startGame(mode, fresh, scenario)`
   and `at(x, y)` (screen position of a tile, as `[x, y]`). Handy for driving the game from Playwright.
   `mode` is `'career'` or `'sandbox'`; `scenario` is an id from `SCENARIOS` in `data.js`.
 - To look at a single sprite, import `sprites.js` in the page and draw it on a canvas of your own.
@@ -74,6 +77,38 @@ TOKI_KEY="$TOKI_KEY" node /tmp/toki-upload.mjs .
   account, provides `window.toki.score()` / `window.toki.achievement()`, and cancels `touchmove`
   outside scrollable elements. Keep saves small and keep scrollable areas as real
   `overflow: auto` elements.
+
+## Playing together
+
+Up to four players build in one park. The relay is `server/rooms.js`, a Cloudflare Worker with one
+Durable Object per room, at `wss://coastr-rooms.levisager.workers.dev` (`RELAY` in `net.js`;
+`server/README.md` says how to deploy it). It only passes messages on; it knows nothing of parks.
+
+- The host's game runs the park as always. Every guest's game is a copy (`net.mirror`): it runs
+  guests and rides for the picture, but `tick` skips money, days, research, goals, awards, weather
+  and events there (`net.quiet` makes `earn` / `spend` do nothing while a mirror ticks). Its guests
+  are only for show: it brings in as many as the host has (`net.hostGuests`).
+- Changes go both ways as diffs (`sync.js`): `diff()` compares the park with what it looked like
+  at the last look (tiles, objects as text, and the settings in `SETS`), `apply()` takes in another
+  player's diff. A guest also sends the money it spent (`dc`, `dl`, `df`); the host adds it to its
+  own. The host passes each guest's diff on to everyone, the sender included, so all games end up
+  the same even when two players change one tile at once. A part of our own diff that we have
+  changed again since is not taken back (`sent`).
+- So any new way of changing the park works in a shared park as long as it changes `S` (tiles,
+  `S.objs`, a key in `SETS`) and the money through `spend` / `earn`. A new field on an object is
+  shared by itself; add it to `SKIP` in `sync.js` if it only matters while the game runs, or the
+  park is sent again every quarter of a second. A new setting of the park (like `fee`) goes in
+  `SETS`; a new number the host's game keeps up to date goes in `HOST_KEYS`.
+- Object ids: in a room every player takes ids with `id % 4 === slot` (`newId` in `world.js`), and
+  undo only removes the player's own new objects. Never use `S.nextId++` directly.
+- Coaster ratings count the scenery round the track at the time they are worked out, so two games
+  can differ slightly: they are shared as they are (`RATING` in `sync.js`).
+- What the host's game does that the others should hear about (goals, research, achievements,
+  month and year end, park events) is passed on with the numbers once a second (`SHARE` in
+  `net.js`). So achievements and stars reach every player, and every player's copy is saved under
+  `coastr.save.m<host's park id>`, which counts for their stars too.
+- Toki: `toki.room(code)` while in a room, `?room=CODE` joins at start, `toki.onHost` opens a room.
+  `multiplayer` and `max_players` are set in `toki.json`.
 
 ## Conventions and gotchas
 
@@ -168,6 +203,9 @@ TOKI_KEY="$TOKI_KEY" node /tmp/toki-upload.mjs .
   one tile would cost, `applyArea` does the work and records one undo step (`snapshot` / `restore`
   in `world.js`).
 - Rides, stalls and coaster stations are placed with a confirm bar on touch, directly on mouse.
+- In a shared park the top bar shows a pill with a dot per player (`#st-room`, opens the room
+  panel); on phone layouts it takes the date's place in the first row. Other players' markers are
+  drawn in `drawOverlays`.
 
 **Text**
 - Every string is in `i18n.js`, in English and German. Add both when adding text.
