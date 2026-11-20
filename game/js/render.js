@@ -1,9 +1,9 @@
 // Isometric renderer: backdrop, terrain, paths, scenery, rides, coasters, guests, light and overlays.
-import { N, DX, DY, RIDES, SCN, SCENERY, COASTERS } from './data.js';
+import { N, DX, DY, RIDES, SCN, SCENERY, COASTERS, isPlat } from './data.js';
 import { S, idx, inB, accessTiles, walkH } from './world.js';
 import { posAt, trainDist, STATION_HEAD, CAR_LEN, endState, bankAt, corkAngle } from './coaster.js';
 import { guestPos, queueLine } from './guests.js';
-import { darkness } from './sim.js';
+import { darkness, trainsOf } from './sim.js';
 import * as SP from './sprites.js';
 import { drawFxWorld, drawFxGlow, drawFxScreen, fxWet, fxSnow } from './fx.js';
 import { drawPiece, drawCar, stationRoof, setTrackDetail, coasterThumb, trackPictures, loopFarHalf } from './track.js';
@@ -19,7 +19,8 @@ export const view = { w: 800, h: 600, dpr: 1 };
 // Settings that only change the picture. q = 0 (everything) to 3 (plainest): main.js lowers it by
 // itself when frames take too long, unless auto is off.
 // ground: false draws the ground straight to the screen every frame (to compare against the kept picture).
-export const look = { night: true, q: 0, auto: true, ground: true };
+// dark: when set (0 to 1), how dark it is drawn whatever the time of day (the photo mode's day and night).
+export const look = { night: true, q: 0, auto: true, ground: true, dark: null };
 // world to device pixels for the frame being drawn: x * a + e, y * a + f (e and f are whole pixels)
 export const px = { a: 1, e: 0, f: 0 };
 /** Copies a picture made at exactly scale px.a, with its top left corner at world point (wx, wy). */
@@ -74,7 +75,12 @@ export function pickThing(px, py) {
     const d = Math.hypot(isoX(gp.x, gp.y) - wx, isoY(gp.x, gp.y, gp.z) - 7 - wy);
     if (d < bd) { bd = d; best = g; }
   }
-  if (best) return { kind: 'guest', id: best.id };
+  for (const g of S.crew || []) {
+    guestPos(g, gp);
+    const d = Math.hypot(isoX(gp.x, gp.y) - wx, isoY(gp.x, gp.y, gp.z) - 7 - wy);
+    if (d < bd) { bd = d; best = g; }
+  }
+  if (best) return best.crew ? { kind: 'staff' } : { kind: 'guest', id: best.id };
   let bo = null, depth = -1;
   for (const id in S.objs) {
     const o = S.objs[id];
@@ -230,6 +236,7 @@ function drawGuest(ctx, g, sx, sy, sel, time, rain) {
     if (!cv) guestBody(ctx, g, sx, sy, step, hop, cheer, g.nausea > 70, k);
     else if (guestScale === px.a) blit(ctx, cv, sx - GW / 2, sy - GY); else ctx.drawImage(cv, sx - GW / 2, sy - GY, GW, GH);
   } else guestBody(ctx, g, sx, sy, step, hop, cheer, g.nausea > 70, k);
+  if (g.crew) { crewKit(ctx, g, sx, by, sy, hy, time); return; }
   if (g.gift) {
     const cols = ['#ef476f', '#ffd23f', '#06d6a0', '#3b8ed0', '#9b5de5'];
     const bx = sx + 5 + Math.sin(g.walk * 0.3 + time) * 1.2, byy = sy - 27 - bob;
@@ -248,6 +255,65 @@ function drawGuest(ctx, g, sx, sy, sel, time, rain) {
     ctx.fillStyle = 'rgba(255,255,255,0.35)';
     ctx.beginPath(); ctx.ellipse(sx + 2.5, uy, 2.6, 3.4, 0, Math.PI, 0); ctx.fill();
   }
+}
+// What marks out the staff: a handyman's broom, a mechanic's toolbox and spanner, an entertainer's bear ears and balloons.
+function crewKit(ctx, g, sx, by, sy, hy, time) {
+  const work = g.st === 'work';
+  ctx.lineCap = 'round';
+  if (g.crew === 'clean') {
+    const sw = work ? Math.sin(g.walk) * 4 : 0, bx = sx + 6 + sw;
+    ctx.strokeStyle = '#8a5a35'; ctx.lineWidth = 1.3;
+    ctx.beginPath(); ctx.moveTo(sx + 3.4, by - 8); ctx.lineTo(bx, sy - 1.5); ctx.stroke();
+    ctx.fillStyle = '#ffd23f';
+    ctx.beginPath(); ctx.moveTo(bx - 2.6, sy - 2.4); ctx.lineTo(bx + 2.6, sy - 2.4); ctx.lineTo(bx + 3.4, sy + 1); ctx.lineTo(bx - 3.4, sy + 1); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(sx - 3, by - 7.4, 6, 1.5);
+  } else if (g.crew === 'mech') {
+    ctx.fillStyle = '#ffd23f'; ctx.fillRect(sx - 3, by - 7.4, 6, 1.5);
+    if (work) {
+      const a = Math.sin(g.walk) * 0.7 - 0.9, wx = sx + 3.2 + Math.cos(a) * 6, wy = by - 9 + Math.sin(a) * 6;
+      ctx.strokeStyle = '#c9d1de'; ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.moveTo(sx + 3.2, by - 9); ctx.lineTo(wx, wy); ctx.stroke();
+      ctx.fillStyle = '#ffd23f';
+      for (let k = 0; k < 3; k++) { const ph = (time * 2.3 + k / 3) % 1, an = k * 2.1 + ph; ctx.fillRect(wx + Math.cos(an) * ph * 7 - 0.8, wy + Math.sin(an) * ph * 7 - 0.8, 1.6, 1.6); }
+    } else {
+      ctx.fillStyle = '#d63a5f'; ctx.fillRect(sx + 2.6, by - 4.4, 5.2, 3.6);
+      ctx.strokeStyle = '#2b2d42'; ctx.lineWidth = 0.9;
+      ctx.beginPath(); ctx.moveTo(sx + 3.8, by - 4.4); ctx.lineTo(sx + 3.8, by - 5.8); ctx.lineTo(sx + 6.6, by - 5.8); ctx.lineTo(sx + 6.6, by - 4.4); ctx.stroke();
+    }
+  } else {
+    ctx.fillStyle = '#c98b5a';
+    ctx.beginPath(); ctx.arc(sx - 2.6, hy - 2.8, 1.7, 0, 6.3); ctx.arc(sx + 2.6, hy - 2.8, 1.7, 0, 6.3); ctx.fill();
+    ctx.fillStyle = '#ef476f';
+    ctx.beginPath(); ctx.moveTo(sx, by - 10.2); ctx.lineTo(sx - 2.4, by - 11.6); ctx.lineTo(sx - 2.4, by - 8.8); ctx.closePath(); ctx.moveTo(sx, by - 10.2); ctx.lineTo(sx + 2.4, by - 11.6); ctx.lineTo(sx + 2.4, by - 8.8); ctx.closePath(); ctx.fill();
+    const cols = ['#ef476f', '#3b8ed0', '#06d6a0'];
+    ctx.strokeStyle = 'rgba(60,60,60,0.6)'; ctx.lineWidth = 0.6;
+    for (let k = 0; k < 3; k++) {
+      const bx = sx + 4 + k * 3.4 + Math.sin(g.walk * 0.3 + time + k) * 1.1, byy = hy - 13 - (k === 1 ? 3 : 0);
+      ctx.beginPath(); ctx.moveTo(sx + 3.2, by - 8); ctx.lineTo(bx, byy + 4); ctx.stroke();
+      ctx.fillStyle = cols[k];
+      ctx.beginPath(); ctx.ellipse(bx, byy, 3, 3.8, 0, 0, 6.3); ctx.fill();
+    }
+  }
+}
+// Litter on a path: a few scraps, more of them the worse it is.
+const TRASH = ['#ffffff', '#ffd23f', '#ef476f', '#8ed1fc', '#f4e3c0', '#c9d1de'];
+function drawLitter(ctx, x, y, i, l) {
+  const z = walkH(i);
+  for (let k = 0; k < l * 2; k++) {
+    const u = 0.14 + hash(x * 7 + k, y * 3 + k * 5) * 0.72, v = 0.14 + hash(y * 11 + k * 3, x + k) * 0.72;
+    const px0 = isoX(x + u, y + v), py0 = isoY(x + u, y + v, z);
+    ctx.fillStyle = TRASH[(x * 3 + y * 5 + k) % 6];
+    if (k % 3 === 0) { ctx.beginPath(); ctx.moveTo(px0 - 2.2, py0); ctx.lineTo(px0 - 0.4, py0 - 2); ctx.lineTo(px0 + 2.2, py0 - 0.6); ctx.lineTo(px0 + 0.8, py0 + 1.4); ctx.closePath(); ctx.fill(); }
+    else if (k % 3 === 1) ctx.fillRect(px0 - 1.3, py0 - 2.6, 2.6, 3.2);
+    else { ctx.beginPath(); ctx.ellipse(px0, py0, 2.4, 1.3, 0.5, 0, 6.3); ctx.fill(); }
+  }
+}
+// A spanner on the badge of a ride that has broken down.
+function spanner(ctx, x, y, s) {
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.4 * s; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(x - 3.4 * s, y + 3.4 * s); ctx.lineTo(x + 1.6 * s, y - 1.6 * s); ctx.stroke();
+  ctx.lineWidth = 1.8 * s;
+  ctx.beginPath(); ctx.arc(x + 2.8 * s, y - 2.8 * s, 2.3 * s, 0.25 * Math.PI, 1.25 * Math.PI, true); ctx.stroke();
 }
 // The little bubble over a guest who just thought something.
 function drawEmote(ctx, kind, x, y, a) {
@@ -294,9 +360,10 @@ const tp = {};
 const trains = []; // flat list for one coaster: time on track, riders, moving (1) or waiting (0)
 let fine = true; // zoomed in far enough for small details to be worth drawing
 const gp = {};
-const lights = [], emotes = [];
+const lights = [], emotes = [], flashes = [];
 let glowWarm = null, glowCool = null;
 const queueSpot = new Map();
+const platN = new Int16Array(8);
 let queuePv = -1;
 // Cars in a loop, by coaster and piece: [cars on the way up, cars on the way down]. A loop is drawn in one
 // go at its front tile, so its cars are drawn there too, each half's after that half of the track.
@@ -390,7 +457,7 @@ export function render(ctx, time, ui) {
   ui0 = ui;
   const { w, h, dpr } = view, z = cam.zoom, TH = themeOf(S.theme);
   if (S.theme !== stampTheme) { stampTheme = S.theme; stamps.clear(); if (SP.setTuft) SP.setTuft(TH.tuft === '#5aa83d' ? '#3d9a47' : TH.tuft); }
-  const dark = look.night ? darkness() : 0;
+  const dark = look.dark !== null && look.dark !== undefined ? look.dark : look.night ? darkness() : 0;
   if (SP.setNight) SP.setNight(dark);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const detail = z >= 0.6 && look.q < 2;
@@ -455,7 +522,7 @@ export function render(ctx, time, ui) {
     const gs = A;
     if (gs !== guestScale) { guestScale = gs; guestPics.clear(); }
   }
-  lights.length = 0; emotes.length = 0;
+  lights.length = 0; emotes.length = 0; flashes.length = 0;
 
   // dynamic things go into per-tile buckets so they sort with the scenery
   buckets.clear();
@@ -467,14 +534,33 @@ export function render(ctx, time, ui) {
     const tx = Math.max(0, Math.min(N - 1, Math.floor(gp.x))), ty = Math.max(0, Math.min(N - 1, Math.floor(gp.y)));
     addBucket(idx(tx, ty), { g, x: gp.x, y: gp.y, z: gp.z, d: gp.x + gp.y });
   }
+  if (S.crew) for (const g of S.crew) {
+    guestPos(g, gp);
+    const tx = Math.max(0, Math.min(N - 1, Math.floor(gp.x))), ty = Math.max(0, Math.min(N - 1, Math.floor(gp.y)));
+    addBucket(idx(tx, ty), { g, x: gp.x, y: gp.y, z: gp.z, d: gp.x + gp.y });
+  }
   if (queuePv !== S.pv) { queueSpot.clear(); queuePv = S.pv; }
   for (const id in S.objs) {
     const c = S.objs[id];
     // people waiting stand along the ride's queue line, or in a little crowd by its entrance if it has none
-    if (c.kind !== 'stall' && c.queue.length && S.gmap) {
+    if (c.kind === 'coaster' && c.queue.length && S.gmap && c.sim && c.sim.stops && c.sim.stops.length) {
+      // a railway: everyone waits by the platform they walked up to
+      platN.fill(0);
+      for (let k = 0; k < c.queue.length; k++) {
+        const g = S.gmap.get(c.queue[k]);
+        if (!g) continue;
+        const pl = Math.min(7, g.plat || 0), kk = platN[pl]++;
+        if (kk >= 12) continue;
+        let spot = queueSpot.get(c.id * 8 + pl);
+        if (spot === undefined) { const a = accessTiles(c, pl); spot = a.length ? a[a.length >> 1] : -1; queueSpot.set(c.id * 8 + pl, spot); }
+        if (spot < 0) continue;
+        const x = (spot % N) + 0.26 + (kk % 3) * 0.24 + ((kk / 3) | 0) % 2 * 0.1, y = ((spot / N) | 0) + 0.26 + ((kk / 3) | 0) * 0.22;
+        addBucket(spot, { g, x, y, z: walkH(spot), d: x + y });
+      }
+    } else if (c.kind !== 'stall' && c.queue.length && S.gmap) {
       const line = queueLine(c);
-      let spot = queueSpot.get(c.id);
-      if (spot === undefined) { const a = accessTiles(c); spot = a.length ? a[0] : -1; queueSpot.set(c.id, spot); }
+      let spot = queueSpot.get(c.id * 8);
+      if (spot === undefined) { const a = accessTiles(c); spot = a.length ? a[0] : -1; queueSpot.set(c.id * 8, spot); }
       const shown = line.length ? Math.min(c.queue.length, line.length * 4 + 8) : Math.min(12, c.queue.length);
       for (let k = 0; k < shown; k++) {
         const g = S.gmap.get(c.queue[k]);
@@ -494,7 +580,7 @@ export function render(ctx, time, ui) {
     else {
       let arriving = false;
       if (c.runs) for (const r of c.runs) { trains.push(r.t, r.riders.length, 1); if (r.t > sm.T - 3.2) arriving = true; }
-      if (!arriving && (!c.runs || c.runs.length < Math.max(1, Math.min(3, c.trains || 1)) || !c.runs.length)) trains.push(0, 0, 0);
+      if (!arriving && (!c.runs || c.runs.length < trainsOf(c) || !c.runs.length)) trains.push(0, 0, 0);
     }
     for (let q = 0; q < trains.length; q += 3) {
       const moving = trains[q + 2] === 1, head = moving ? trainDist(sm, trains[q]) : STATION_HEAD;
@@ -516,13 +602,17 @@ export function render(ctx, time, ui) {
             sx /= m; sy /= m; sz = tan / m;
           }
         }
-        const v = sm.v[Math.min(sm.segs, tp.k)] || 0;
+        const v = sm.v[Math.min(sm.segs, tp.k)] || 0, engine = T.kind === 'train' && j === 0;
         const car = {
           car: 1, c, x: tp.x, y: tp.y, z: tp.z, tx: tp.tx, ty: tp.ty, tz: tp.tz, sx, sy, sz, d: tp.x + tp.y + 0.01,
-          riders: Math.max(0, Math.min(2, riders)), first: j === 0, last: j === T.cars - 1, n: T.cars, j, time, v,
-          fun: moving && v > 9 && p.t !== 'station' && !p.chain ? 1 : 0,
+          riders: engine ? 0 : Math.max(0, Math.min(2, riders)), first: j === 0, last: j === T.cars - 1, n: T.cars, j, time, v: moving ? v : 0,
+          fun: moving && v > 9 && !isPlat(p) && !p.chain ? 1 : 0,
+          // a boat throws up spray while it is still fast on level water
+          wet: T.kind === 'flume' && moving && v > 5.5 && !p.chain && p.h0 === p.h1 ? Math.min(1, (v - 5.5) / 4) : 0,
         };
-        riders -= 2;
+        if (!engine) riders -= 2;
+        // the on-ride camera flashes as the middle of the train goes by
+        if (p.t === 'photo' && moving && j === 1 && Math.abs(tp.u - 0.5) < 0.22) flashes.push(isoX(tp.x, tp.y), isoY(tp.x, tp.y, tp.z + 1.2));
         if (p.t === 'loop') {
           const key = c.id * 1024 + tp.pi;
           let lc = loopCars.get(key);
@@ -544,11 +634,14 @@ export function render(ctx, time, ui) {
   // what stands on one tile (apart from the ground): scenery, track, a stall, guests and cars, the entrance
   const cell = (x, y, i, sx, sy, he) => {
     const sc = S.scn[i];
+    if (S.lit[i] && fine) drawLitter(ctx, x, y, i, S.lit[i]);
     if (sc) {
+      // a fence joins up with the fences on the tiles round it: 1 = at x - 1, 2 = x + 1, 4 = y - 1, 8 = y + 1
+      const nb = sc === SCN.fence ? (x > 0 && S.scn[i - 1] === sc ? 1 : 0) | (x + 1 < N && S.scn[i + 1] === sc ? 2 : 0) | (y > 0 && S.scn[i - N] === sc ? 4 : 0) | (y + 1 < N && S.scn[i + N] === sc ? 8 : 0) : undefined;
       if (!STILL[sc]) drawScenery(ctx, sc, sx, sy + HH, time, hash(x, y));
-      else if (stamp) stampScenery(ctx, sc, sx, sy + HH, hash(x, y), dark > 0.3);
-      else drawScenery(ctx, sc, sx, sy + HH, time, stampHash(hash(x, y))); // the same look as its picture
-      if (dark > 0.05 && (sc === SCN.lamp || sc === SCN.torch)) lights.push(sx, sy + HH - 30, sc === SCN.lamp ? 78 : 58 + Math.sin(time * 9 + x) * 5, 0);
+      else if (stamp) stampScenery(ctx, sc, sx, sy + HH, hash(x, y), dark > 0.3, nb);
+      else drawScenery(ctx, sc, sx, sy + HH, time, stampHash(hash(x, y)), nb); // the same look as its picture
+      if (dark > 0.05 && (sc === SCN.lamp || sc === SCN.torch || sc === SCN.lantern)) lights.push(sx, sy + HH - 30, sc === SCN.lamp ? 78 : sc === SCN.lantern ? 64 : 58 + Math.sin(time * 9 + x) * 5, 0);
     }
     let roofs = null;
     if (S.trk.has(i)) {
@@ -558,7 +651,7 @@ export function render(ctx, time, ui) {
         const p = c.pieces[s.p];
         if (!p || p.t === 'loop') continue; // loops are drawn between the diagonals, see planLate
         drawPiece(ctx, c, s.p, ui.editing && ui.editing !== c.id ? 0.85 : undefined, i);
-        if (p.t === 'station') {
+        if (isPlat(p)) {
           (roofs || (roofs = [])).push(c, p);
           if (dark > 0.05) lights.push(sx, sy - 12, 62, 0);
         }
@@ -656,16 +749,23 @@ export function render(ctx, time, ui) {
     ctx.globalCompositeOperation = 'source-over';
   }
   drawFxGlow(ctx);
-  drawOverlays(ctx, time, ui);
+  if (flashes.length) {
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.beginPath();
+    for (let k = 0; k < flashes.length; k += 2) { ctx.moveTo(flashes[k] + 13, flashes[k + 1]); ctx.arc(flashes[k], flashes[k + 1], 13, 0, 6.3); }
+    ctx.fill();
+  }
+  if (!ui.photo) drawOverlays(ctx, time, ui);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   drawFxScreen(ctx, w, h);
 }
 
 // Scenery that does not move (apart from a gentle sway) can be stamped from a picture made once, which
 // is much cheaper than drawing its shapes again every frame. Four pictures per kind cover the size variety.
-const STILL = SCENERY.map((d) => !!d && ['oak', 'pine', 'snowpine', 'palm', 'cactus', 'bush', 'hedge', 'topiary', 'flowers', 'rock', 'bench', 'picnic', 'statue', 'snowman', 'lamp'].includes(d.id));
-// lamps get two pictures: by day, and lit at night
-const LIT = SCENERY.map((d) => !!d && d.id === 'lamp');
+const STILL = SCENERY.map((d) => !!d && ['oak', 'pine', 'snowpine', 'palm', 'cactus', 'bush', 'hedge', 'topiary', 'flowers', 'rock', 'bench', 'picnic', 'statue', 'snowman', 'lamp',
+  'birch', 'cherry', 'maple', 'tulips', 'planter', 'bin', 'gazebo', 'mushroom', 'lantern', 'fence'].includes(d.id));
+// lamps and lanterns get two pictures: by day, and lit at night
+const LIT = SCENERY.map((d) => !!d && (d.id === 'lamp' || d.id === 'lantern'));
 // The pictures are made at the screen's own scale (stampScale, set once the zoom has settled), so
 // stamping is a plain copy rather than shrinking a big picture every time.
 const stamps = new Map();
@@ -674,8 +774,9 @@ let stampScale = 1;
 // Still scenery comes in four looks per kind (size, colours, apples...): the same four whether it is
 // drawn from its picture or as shapes, so nothing changes when the zoom or the picture quality does.
 const stampHash = (hsh) => (Math.min(3, (hsh * 4) | 0) + 0.5) / 4;
-function stampScenery(ctx, code, cx, cy, hsh, lit) {
-  const b = Math.min(3, (hsh * 4) | 0), key = (code * 4 + b) * 2 + (lit && LIT[code] ? 1 : 0);
+// (nb: which neighbours a fence joins up with; each combination is a picture of its own)
+function stampScenery(ctx, code, cx, cy, hsh, lit, nb) {
+  const b = Math.min(3, (hsh * 4) | 0), key = ((code * 4 + b) * 2 + (lit && LIT[code] ? 1 : 0)) * 16 + (nb || 0);
   let c = stamps.get(key);
   if (c === undefined || (c && c.s !== stampScale)) {
     if (typeof document !== 'undefined') {
@@ -683,12 +784,12 @@ function stampScenery(ctx, code, cx, cy, hsh, lit) {
       cv.width = Math.ceil(72 * s); cv.height = Math.ceil(88 * s);
       const g = cv.getContext('2d');
       g.setTransform(s, 0, 0, s, 0, 0);
-      drawScenery(g, code, 36, 72, 0, (b + 0.5) / 4);
+      drawScenery(g, code, 36, 72, 0, (b + 0.5) / 4, nb);
       c = { cv, s };
     } else c = null;
     stamps.set(key, c);
   }
-  if (!c) drawScenery(ctx, code, cx, cy, 0, stampHash(hsh));
+  if (!c) drawScenery(ctx, code, cx, cy, 0, stampHash(hsh), nb);
   else if (c.s === px.a) blit(ctx, c.cv, cx - 36, cy - 72);
   else ctx.drawImage(c.cv, cx - 36, cy - 72, 72, 88);
 }
@@ -1063,7 +1164,7 @@ function drawOverlays(ctx, time, ui) {
   if (ui.sel && ui.sel.kind === 'obj') {
     const o = S.objs[ui.sel.id];
     if (o && o.kind !== 'coaster') outline(ctx, o.x, o.y, o.w, o.h, o.z + 0.05, null, `rgba(255,255,255,${0.5 + 0.4 * pulse})`);
-    else if (o) for (const p of o.pieces) if (p.t === 'station') outline(ctx, p.x, p.y, 1, 1, p.h0 + 0.25, null, `rgba(255,255,255,${0.5 + 0.4 * pulse})`);
+    else if (o) for (const p of o.pieces) if (isPlat(p)) outline(ctx, p.x, p.y, 1, 1, p.h0 + 0.25, null, `rgba(255,255,255,${0.5 + 0.4 * pulse})`);
   }
   // rough spots on the coaster being built or looked at: one dot for each stretch, at its roughest point
   const rc = S.objs[ui.editing] || (ui.sel && ui.sel.kind === 'obj' && S.objs[ui.sel.id]);
@@ -1209,9 +1310,11 @@ function drawOverlays(ctx, time, ui) {
       else if (o.kind === 'coaster' && o.sim && !o.sim.ok) { text = '!'; col = '#e63946'; }
       else if (!o.open) { text = '×'; col = '#8d99ae'; }
       else if (o.noAccess) { text = '!'; col = '#e63946'; }
+      else if (o.broken) { text = ' '; col = '#f78c1f'; }
       else if (o.kind !== 'stall' && o.queue.length) text = String(o.queue.length);
       if (!text) continue;
       pill(ctx, text, cx, top, col, 1 / Math.max(0.8, cam.zoom));
+      if (text === ' ') spanner(ctx, cx, top, 1 / Math.max(0.8, cam.zoom));
     }
   }
 }

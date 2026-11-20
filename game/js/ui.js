@@ -1,7 +1,7 @@
 // Everything the player touches: toolbar, build menus, panels, the coaster builder, and map input.
 import {
   N, DX, DY, RIDES, STALLS, SCENERY, SCN, COASTERS, RIDE_ORDER, STALL_ORDER, COASTER_ORDER, SCENERY_ORDER, RESEARCH, RESEARCH_LEVELS,
-  MAX_LOAN, TRACK_COLORS, SCENARIOS, DESIGNS, DESIGN_ORDER,
+  MAX_LOAN, TRACK_COLORS, SCENARIOS, DESIGNS, DESIGN_ORDER, STAFF, STAFF_ORDER,
 } from './data.js';
 import {
   S, idx, inB, events, canPath, placePath, removePath, canPlaceBox, placeRide, placeStall, footprint, canScenery,
@@ -13,7 +13,11 @@ import {
   canPlaceDesign, placeDesign, designOf, designShape,
 } from './coaster.js';
 import { rideWorth, rideStats, rideUsable, buzz } from './guests.js';
-import { date, feeWorth, goalProgress, startTest, coasterCap, goalsOf, researchNext, darkness, maxTrains, trainsOf, trainCost, renovate, renovateCost } from './sim.js';
+import {
+  date, feeWorth, goalProgress, startTest, coasterCap, goalsOf, researchNext, darkness, maxTrains, trainsOf, trainCost, renovate, renovateCost,
+  challengeProgress, pickChallenge,
+} from './sim.js';
+import { syncCrew, wages, repairCost, repairNow } from './staff.js';
 import { cam, view, look, pickTile, pickThing, toWorld, isoX, isoY, coasterThumb, objCenter, miniMap, miniMapTile } from './render.js';
 import { drawRide, drawStall, thumbRide, thumbStall, thumbScenery, drawScenery } from './sprites.js';
 import { t, money, num, lang } from './i18n.js';
@@ -25,7 +29,7 @@ import { room, COLORS, MAX_PLAYERS, setCursor } from './net.js';
 export const ui = {
   tool: 'inspect', item: null, rot: 0, ghost: null, sel: null, editing: 0, follow: 0, followPos: null,
   pending: null, slope: 0, chain: false, bank: false, wide: false, camTarget: null, touch: false, hooks: {},
-  cands: null, hot: null, handle: null, area: null, undo: null, pick: null,
+  cands: null, hot: null, handle: null, area: null, undo: null, pick: null, photo: false,
 };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -245,7 +249,7 @@ function updateInfo() {
     if (ui.tool === 'ride' && it) { const d = RIDES[it]; txt = t('i_stats', num(d.E, 1), num(d.I, 1), num(d.Q, 1), d.cap); }
     else if (ui.tool === 'coaster' && it) { const dz = designFor(it); txt = dz ? t('i_design', num(dz.e || 0, 1), dz.w || '?', dz.h || '?') : t('d_' + it); }
     else if (ui.tool === 'stall' && it) txt = t('d_' + it);
-    else if (ui.tool === 'scenery' && it) txt = t('i_beauty', SCENERY[SCN[it]].beauty) + ' ' + t(ui.touch ? 'i_line_touch' : 'i_line_mouse');
+    else if (ui.tool === 'scenery' && it) txt = (it === 'bin' ? t('d_bin') : t('i_beauty', SCENERY[SCN[it]].beauty)) + ' ' + t(ui.touch ? 'i_line_touch' : 'i_line_mouse');
     else if (ui.tool === 'path') txt = (it === 'queuetile' ? t('i_queue') + ' ' : '') + t(ui.touch ? 'i_line_touch' : 'i_line_mouse');
     else if (ui.tool === 'terrain') txt = t(ui.touch ? 'i_area_touch' : 'i_area_mouse');
     else if (ui.tool === 'demolish') txt = t('i_demolish') + ' ' + t(ui.touch ? 'i_area_touch' : 'i_area_mouse');
@@ -546,7 +550,7 @@ export function exitEditor(silent) {
       c.noAccess = !accessTiles(c).length;
       toast(c.noAccess ? t('no_access') : objName(c) + ': ' + t('open'), c.noAccess ? 'bad' : 'good');
       openPanel('obj', c.id);
-    } else toast(t(c.closed ? 'stuck' : 'unfinished'), 'bad');
+    } else toast(t(!c.closed ? 'unfinished' : kindOf(c) === 'flume' ? 'stuck_flume' : 'stuck'), 'bad');
   }
   markTool(); buildTray(true);
 }
@@ -562,17 +566,18 @@ function buildBuilder() {
     <div class="b-head"><b>${esc(objName(c))}</b><span data-k="info"></span></div>
     <div class="b-status" data-k="status"></div>
     <canvas class="b-graph" data-k="graph" role="img" aria-label="${esc(t('b_graph'))}" title="${esc(t('b_graph'))}"></canvas>
-    <div class="b-pick" hidden><b data-k="pickname"></b>${btn('p-chain', 'b_chain', 'chain')}${btn('p-bank', 'b_bank', 'bank')}${btn('p-s', 'b_plain', 'slope_f')}${btn('p-brake', 'b_brake', 'brake')}${btn('p-boost', 'b_boost', 'boost')}${btn('p-cut', 'b_cut', 'cut')}${btn('p-x', 'close', 'close')}</div>
+    <div class="b-pick" hidden><b data-k="pickname"></b>${btn('p-chain', 'b_chain', 'chain')}${btn('p-bank', 'b_bank', 'bank')}${btn('p-s', 'b_plain', 'slope_f')}${btn('p-brake', 'b_brake', 'brake')}${btn('p-boost', 'b_boost', 'boost')}${btn('p-photo', 'b_photo', 'camera')}${btn('p-stop', 'b_stop', 'platform')}${btn('p-cut', 'b_cut', 'cut')}${btn('p-x', 'close', 'close')}</div>
     <div class="b-rows">
       <div class="grp g-slope">${slopes}</div>
       <div class="grp g-dir">${btn('l', 'b_left', 'turn_l', 'big', '←')}${btn('s', 'b_straight', 'straight', 'big', '↑')}${btn('r', 'b_right', 'turn_r', 'big', '→')}</div>
-      <div class="grp g-opt">${T.launch ? '' : btn('chain', 'b_chain', 'chain', '', 'C')}${btn('wide', 'b_wide', 'wide', '', 'V')}${T.bank ? btn('bank', 'b_bank', 'bank', '', 'B') : ''}</div>
-      <div class="grp g-spec">${T.loop ? btn('loop', 'b_loop', 'loop', '', 'L') : ''}${T.cork ? btn('cork', 'b_cork', 'cork', '', 'K') : ''}${S.unlocked.booster && c.ctype !== 'mini' ? btn('boost', 'b_boost', 'boost') : ''}${btn('brake', 'b_brake', 'brake')}</div>
+      <div class="grp g-opt">${T.launch || T.noChain ? '' : btn('chain', 'b_chain', 'chain', '', 'C')}${btn('wide', 'b_wide', 'wide', '', 'V')}${T.bank ? btn('bank', 'b_bank', 'bank', '', 'B') : ''}</div>
+      <div class="grp g-spec">${T.loop ? btn('loop', 'b_loop', 'loop', '', 'L') : ''}${T.cork ? btn('cork', 'b_cork', 'cork', '', 'K') : ''}${S.unlocked.booster && c.ctype !== 'mini' && !T.noBoost ? btn('boost', 'b_boost', 'boost') : ''}${T.noBrake ? '' : btn('brake', 'b_brake', 'brake')}${S.unlocked.photo && !T.kind ? btn('photo', 'b_photo', 'camera', '', 'P') : ''}${T.kind === 'train' ? btn('stop', 'b_stop', 'platform', '', 'H') : ''}</div>
       <div class="grp g-act">${btn('undo', 'b_undo', 'undo', 'act', '↓')}${btn('auto', 'b_auto', 'wand', 'act', 'F')}${btn('test', 'b_test', 'play', 'act', 'T')}${btn('done', 'b_done', 'check', 'act done', 'Enter')}</div>
     </div>`;
   refreshBuilder();
 }
-const PIECE_NAME = { s: 'b_straight', l: 'b_left', r: 'b_right', wl: 'b_left', wr: 'b_right', loop: 'b_loop', cork: 'b_cork', boost: 'b_boost', brake: 'b_brake' };
+const PIECE_NAME = { s: 'b_straight', l: 'b_left', r: 'b_right', wl: 'b_left', wr: 'b_right', loop: 'b_loop', cork: 'b_cork', boost: 'b_boost', brake: 'b_brake', photo: 'b_photo', stop: 'b_stop' };
+const kindOf = (c) => COASTERS[c.ctype].kind || '';
 function ratingLine(c) {
   return `${t('excitement')} ${num(c.E, 1)} · ${t('intensity')} ${num(c.I, 1)} · ${t('nausea')} ${num(c.Q, 1)}`;
 }
@@ -628,9 +633,9 @@ function refreshBuilder() {
   q('info').textContent = parts.join(' · ');
   const st = q('status');
   let txt = '', cls = 'b-status';
-  if (!sim.ok) { txt = t('stuck'); cls += ' bad'; }
+  if (!sim.ok) { txt = t(kindOf(c) === 'flume' ? 'stuck_flume' : 'stuck'); cls += ' bad'; }
   else if (c.closed) { txt = t('b_complete') + ' ' + ratingLine(c) + (c.I > 9 ? ' — ' + t('too_intense') : ''); cls += c.I > 9 ? ' bad' : ' good'; }
-  else if (c.pieces.length <= 3) txt = t(COASTERS[c.ctype].launch ? 'b_hint_launch' : 'b_hint');
+  else if (c.pieces.length <= 3) txt = t(COASTERS[c.ctype].launch ? 'b_hint_launch' : kindOf(c) ? 'b_hint_' + kindOf(c) : 'b_hint');
   if (c.closed && sim.ok && c.I <= 9 && ui.pick === null) txt += ' ' + t('b_pickhint');
   if (st.textContent !== txt) st.textContent = txt;
   if (st.className !== cls) st.className = cls;
@@ -643,7 +648,10 @@ function refreshBuilder() {
   if (al) {
     const pp = c.pieces[ui.pick], nm = t('b_piece', ui.pick - 2) + ': ' + t(PIECE_NAME[pp.t] || 'b_straight');
     if (q('pickname').textContent !== nm) q('pickname').textContent = nm;
-    const show = { 'p-chain': al.chain, 'p-bank': al.bank, 'p-s': al.kind && pp.t !== 's', 'p-brake': al.kind && pp.t !== 'brake', 'p-boost': al.kind && al.boost && pp.t !== 'boost', 'p-cut': ui.pick < c.pieces.length - 1 };
+    const show = {
+      'p-chain': al.chain, 'p-bank': al.bank, 'p-s': al.kind && pp.t !== 's', 'p-brake': al.kind && al.brake && pp.t !== 'brake', 'p-boost': al.kind && al.boost && pp.t !== 'boost',
+      'p-photo': al.kind && al.photo && pp.t !== 'photo', 'p-stop': al.kind && al.stop && pp.t !== 'stop', 'p-cut': ui.pick < c.pieces.length - 1,
+    };
     for (const b of pk.querySelectorAll('button[data-b]')) {
       const a = b.dataset.b;
       if (a in show) b.hidden = !show[a];
@@ -657,7 +665,7 @@ function refreshBuilder() {
     else if (a === 'chain') b.classList.toggle('on', ui.chain);
     else if (a === 'bank') b.classList.toggle('on', ui.bank);
     else if (a === 'wide') b.classList.toggle('on', ui.wide);
-    if (['l', 's', 'r', 'loop', 'cork', 'boost', 'brake', 'auto'].includes(a)) b.disabled = c.closed;
+    if (['l', 's', 'r', 'loop', 'cork', 'boost', 'brake', 'photo', 'stop', 'auto'].includes(a)) b.disabled = c.closed;
     if (a === 'test') b.disabled = !(c.closed && sim.ok) || c.st !== 'idle';
     if (a === 'undo') b.disabled = c.pieces.length <= 3 || c.st === 'test';
   }
@@ -777,7 +785,7 @@ function builderAct(a) {
   else if (a === 'l' || a === 'r' || a === 's') {
     if (c.closed) return;
     r = addPiece(c, { t: a === 's' ? 's' : (ui.wide ? 'w' : '') + a, slope: ui.slope, chain: ui.chain, bank: ui.bank });
-  } else if (a === 'loop' || a === 'cork' || a === 'boost' || a === 'brake') {
+  } else if (a === 'loop' || a === 'cork' || a === 'boost' || a === 'brake' || a === 'photo' || a === 'stop') {
     if (c.closed || (a === 'loop' && !T.loop) || (a === 'cork' && !T.cork)) return;
     r = addPiece(c, { t: a });
   } else if (a === 'undo') { if (c.pieces.length > 3 && c.st !== 'test') r = undoPiece(c); }
@@ -823,10 +831,24 @@ export function closePanel() {
   panel = null; ui.sel = null;
   if (els.panel) { els.panel.hidden = true; els.hud.classList.remove('has-panel'); }
 }
-const head = (title) => `<div class="p-head"><h2>${esc(title)}</h2><button class="x" data-act="close" aria-label="${esc(t('close'))}">${icon('close')}</button></div>`;
+// (tabs, if any, stay in view with the title while the panel scrolls)
+const head = (title, tabs = '') => `<div class="p-head"><h2>${esc(title)}</h2><button class="x" data-act="close" aria-label="${esc(t('close'))}">${icon('close')}</button>${tabs}</div>`;
 const meter = (k, label) => `<div class="meter"><span>${esc(label)}</span><div class="bar"><i data-w="${k}"></i></div><em data-k="${k}"></em></div>`;
 const word = (v) => t(v < 2.5 ? 'r_low' : v < 5 ? 'r_medium' : v < 7.5 ? 'r_high' : v < 10 ? 'r_vhigh' : 'r_extreme');
 const fact = (k, label) => `<div>${esc(label)}<b data-k="${k}"></b></div>`;
+// Goals, the park's map and lists, the staff and the challenges are four tabs of one panel.
+const HUB = [['goals', 'goals'], ['park', 'hub_park'], ['staff', 'staff'], ['tasks', 'tasks']];
+const hub = (cur) => `<div class="tabs">${HUB.map(([id, key]) => `<button data-act="hub:${id}" class="${id === cur ? 'on' : ''}">${esc(t(key))}</button>`).join('')}</div>`;
+/** What a challenge asks for, in words. */
+function challengeText(c) {
+  switch (c.k) {
+    case 'happy': case 'clean': return t('ch_' + c.k, num(c.n), num(c.g));
+    case 'stalls': case 'value': return t('ch_' + c.k, money(c.n));
+    case 'budget': return t('ch_budget', num(c.n, 1), money(c.cost));
+    case 'flume': return t('ch_flume', num(c.n, 1));
+    default: return t('ch_' + c.k, num(c.n));
+  }
+}
 
 function panelHTML() {
   const p = panel;
@@ -836,11 +858,13 @@ function panelHTML() {
     const isC = o.kind === 'coaster', isS = o.kind === 'stall';
     const usable = !isC || (o.closed && o.sim.ok);
     let h = head(objName(o)) + '<div class="p-body">';
+    const kind = isC ? kindOf(o) : '';
     if (isC && !o.closed) h += `<div class="warn">${esc(t('unfinished'))}</div>`;
-    else if (isC && !o.sim.ok) h += `<div class="warn">${esc(t('stuck'))}</div>`;
+    else if (isC && !o.sim.ok) h += `<div class="warn">${esc(t(kind === 'flume' ? 'stuck_flume' : 'stuck'))}</div>`;
     h += `<div class="warn" data-show="noaccess">${esc(t('no_access'))}</div>`;
+    if (!isS) h += `<div class="warn" data-show="broken" data-k="broken"></div><div class="btns" data-show="broken"><button class="btn blue" data-act="repair" data-k="repair"></button></div>`;
     if (usable) h += `<div class="row"><span>${esc(t('open'))}</span><button class="switch" data-act="toggle" data-k="open"></button></div>`;
-    if (!(isS && o.type === 'toilet')) {
+    if (!(isS && STALLS[o.type].price === 0)) {
       h += `<div class="row"><span>${esc(t('price'))}</span><div class="stepper"><button data-act="price-" aria-label="-">−</button><b data-k="price"></b><button data-act="price+" aria-label="+">+</button></div></div>`;
       if (!isS && usable) h += `<div class="hint" data-k="worth"></div>`;
     }
@@ -850,7 +874,8 @@ function panelHTML() {
       if (isC && o.I > 9) h += `<div class="warn">${esc(t('too_intense'))}</div>`;
     }
     if (isC && usable) {
-      h += `<div class="row"><span>${esc(t('trains'))}</span><div class="stepper"><button data-act="train-" aria-label="-">−</button><b data-k="trains"></b><button data-act="train+" aria-label="+">+</button></div></div><div class="hint" data-k="trainhint"></div>`;
+      if (kind === 'train') h += `<div class="note">${esc(t('train_note'))}</div>`;
+      h += `<div class="row"><span>${esc(t(kind === 'flume' ? 'boats' : 'trains'))}</span><div class="stepper"><button data-act="train-" aria-label="-">−</button><b data-k="trains"></b><button data-act="train+" aria-label="+">+</button></div></div><div class="hint" data-k="trainhint"></div>`;
       h += `<div class="facts">${fact('len', t('length'))}${fact('spd', t('top_speed'))}${fact('drp', t('biggest_drop'))}${fact('tim', t('ride_time'))}${fact('gmax', t('max_g'))}${fact('air', t('airtime'))}</div>`;
     }
     h += `<div class="facts">${isS ? '' : fact('queue', t('queue'))}${fact('cust', t('customers'))}${fact('inc', t('income'))}${isS ? '' : fact('cap', t('capacity'))}</div>`;
@@ -866,7 +891,7 @@ function panelHTML() {
     return h;
   }
   if (p.type === 'guest') {
-    return head(p.name || '') + `<div class="p-body">${meter('happy', t('g_happy'))}${meter('hunger', t('g_hunger'))}${meter('thirst', t('g_thirst'))}${meter('toilet', t('g_toilet'))}${meter('nausea', t('g_nausea'))}${meter('energy', t('g_energy'))}
+    return head(p.name || '') + `<div class="p-body"><div class="note" data-k="doing"></div>${meter('happy', t('g_happy'))}${meter('hunger', t('g_hunger'))}${meter('thirst', t('g_thirst'))}${meter('toilet', t('g_toilet'))}${meter('nausea', t('g_nausea'))}${meter('energy', t('g_energy'))}
       <div class="facts">${fact('cash', t('g_cash'))}${fact('rides', t('g_ridden'))}</div><h3>${esc(t('g_thoughts'))}</h3><ul class="list" data-k="thoughts"></ul></div>`;
   }
   if (p.type === 'finance') {
@@ -895,8 +920,8 @@ function panelHTML() {
   if (p.type === 'goals') {
     const goals = goalsOf(), SC = SCENARIOS[S.sc] || SCENARIOS.meadows;
     let h = head(t('sc_' + S.sc)) + '<div class="p-body">';
+    h = head(t('sc_' + S.sc), hub('goals')) + '<div class="p-body">';
     if (!S.sandbox) h += `<div class="stars big">${starsHTML(S.stars || 0)}</div>`;
-    h += `<div class="btns"><button class="btn flat" data-act="park">${esc(t('park_map'))}</button></div>`;
     h += `<div class="note" data-show="event" data-k="event"></div>`;
     h += `<div class="facts">${fact('guests', t('guests'))}${fact('rating', t('rating'))}${fact('peak', t('p_peak'))}${fact('value', t('f_value'))}${fact('awards', t('awards'))}${fact('year', t('year_guests'))}</div>`;
     if (S.sandbox) h += `<div class="note">${esc(t('goals_sandbox'))}</div>`;
@@ -911,10 +936,40 @@ function panelHTML() {
   if (p.type === 'park') {
     const row = (o) => `<li data-act="go" data-id="${o.id}"><span class="dot" data-k="d${o.id}"></span><span class="nm2">${esc(objName(o))}</span><span class="cnt" data-k="q${o.id}"></span><span class="cnt inc" data-k="i${o.id}"></span></li>`;
     const all = Object.values(S.objs), rides = all.filter((o) => o.kind !== 'stall'), stalls = all.filter((o) => o.kind === 'stall');
-    return head(t('park_map')) + `<div class="p-body"><canvas class="minimap" data-act="map" width="552" height="300"></canvas>
-      <div class="btns"><button class="btn flat" data-act="goals">${esc(t('goals'))}</button><button class="btn flat" data-act="entrance">${esc(t('to_entrance'))}</button></div>
+    return head(t('park_map'), hub('park')) + `<div class="p-body"><canvas class="minimap" data-act="map" width="552" height="300"></canvas>
+      <div class="btns"><button class="btn flat" data-act="entrance">${esc(t('to_entrance'))}</button></div>
       <h3>${esc(t('t_rides'))}</h3><ul class="list rides">${rides.map(row).join('') || `<li>${esc(t('list_none'))}</li>`}</ul>
       ${stalls.length ? `<h3>${esc(t('t_stalls'))}</h3><ul class="list rides">${stalls.map(row).join('')}</ul>` : ''}</div>`;
+  }
+  if (p.type === 'staff') {
+    let h = head(t('staff'), hub('staff')) + `<div class="p-body"><div class="hint" style="margin-top:0">${esc(t('staff_intro'))}</div>`;
+    for (const k of STAFF_ORDER) {
+      h += `<div class="staff"><div><b>${esc(t('st_' + k))}</b><span>${esc(t('std_' + k))}</span><em>${esc(t('st_wage', money(STAFF[k].wage)))}</em></div>
+        <div class="stepper"><button data-act="fire:${k}" aria-label="-">−</button><b data-k="n_${k}"></b><button data-act="hire:${k}" aria-label="+">+</button></div></div>`;
+    }
+    h += meter('tidy', t('st_tidy'));
+    h += `<div class="warn" data-show="dirty">${esc(t('st_dirty'))}</div><div class="warn" data-show="nomech">${esc(t('st_nomech'))}</div>`;
+    h += `<div class="facts">${fact('wages', t('st_wages'))}${fact('nbroken', t('st_broken'))}</div>`;
+    if (S.sandbox) h += `<div class="note">${esc(t('st_sandbox'))}</div>`;
+    return h + '</div>';
+  }
+  if (p.type === 'tasks') {
+    let h = head(t('tasks'), hub('tasks')) + '<div class="p-body">';
+    if (S.sandbox) return h + `<div class="note">${esc(t('ch_sandbox'))}</div></div>`;
+    const C = S.ch, c = C.cur;
+    h += `<div class="hint" style="margin-top:0">${esc(t('ch_intro'))}</div>`;
+    if (c) {
+      h += `<h3>${esc(t('ch_now'))}</h3><div class="task now"><b>${esc(challengeText(c))}</b><div class="prog goal"><i data-w="ch"></i></div>
+        <div class="t-foot"><span data-k="chleft"></span><em>${esc(t('goal_reward', money(c.reward)))}</em></div>
+        <div class="btns"><button class="btn flat" data-act="chdrop">${esc(t('ch_drop'))}</button></div></div>`;
+    }
+    h += `<h3>${esc(t(c ? 'ch_next' : 'ch_pick'))}</h3>`;
+    if (!C.offers.length) h += `<div class="note">${esc(t('ch_none'))}</div>`;
+    C.offers.forEach((o, i) => {
+      h += `<div class="task"><b>${esc(challengeText(o))}</b><div class="t-foot"><span>${esc(t('ch_months', o.months))}</span><em>${esc(t('goal_reward', money(o.reward)))}</em></div>
+        ${c ? '' : `<div class="btns"><button class="btn yellow" data-act="chgo:${i}">${esc(t('ch_start'))}</button></div>`}</div>`;
+    });
+    return h + `<div class="facts">${fact('chdone', t('ch_total'))}</div></div>`;
   }
   if (p.type === 'settings') {
     return head(t('settings')) + `<div class="p-body">
@@ -924,6 +979,7 @@ function panelHTML() {
       <div class="row"><span>${esc(t('s_night'))}</span><button class="switch" data-act="night" data-k="night"></button></div>
       <div class="row"><span>${esc(t('s_lang'))}</span><button class="switch on" data-act="lang">${esc(t('lang_name'))}</button></div>
       <div class="btns"><button class="btn flat" data-act="help">${esc(t('m_help'))}</button><button class="btn flat" data-act="save">${esc(t('s_save'))}</button></div>
+      <div class="btns"><button class="btn flat ic" data-act="photo">${icon('camera')}${esc(t('photo_mode'))}</button><button class="btn flat ic" data-act="share">${icon('share')}${esc(t('share_park'))}</button></div>
       <div class="btns"><button class="btn blue ic" data-act="together">${icon('people')}<span data-k="together"></span></button></div>
       <div class="btns"><button class="btn yellow" data-act="tomenu">${esc(t('s_menu'))}</button></div></div>`;
   }
@@ -964,7 +1020,20 @@ function thoughtText(th) {
   const o = S.objs[th[1]];
   return t(th[0], th[1] ? (o ? objName(o) : '…') : '');
 }
-const FIN_ROWS = ['tickets', 'rides', 'stalls', 'rewards', 'build', 'running', 'research', 'marketing', 'interest'];
+const FIN_ROWS = ['tickets', 'rides', 'stalls', 'rewards', 'build', 'running', 'wages', 'research', 'marketing', 'interest'];
+const NEED_DOING = { hunger: 'gd_food', treat: 'gd_food', thirst: 'gd_drink', toilet: 'gd_toilet', gift: 'gd_shop', hat: 'gd_shop', aid: 'gd_aid' };
+/** What a guest is up to right now, in a few words. */
+function doingText(g) {
+  const o = S.objs[g.obj] || (g.target && g.target.kind === 'obj' ? S.objs[g.target.id] : null);
+  if (g.st === 'ride' && o) return t('gd_ride', objName(o));
+  if (g.st === 'queue' && o) return t('gd_queue', objName(o));
+  const tg = g.target;
+  if (!tg) return t(g.st === 'pause' ? 'gd_pause' : 'gd_stroll');
+  if (tg.kind === 'exit') return t('gd_exit');
+  if (tg.kind === 'bench') return t('gd_bench');
+  if (tg.kind === 'cat') return t(NEED_DOING[tg.need] || 'gd_stroll');
+  return o ? t('gd_to', objName(o)) : t('gd_stroll');
+}
 
 function panelValues() {
   const p = panel, v = {}, w = {}, show = {};
@@ -974,6 +1043,8 @@ function panelValues() {
     v.open = t(o.open ? 'open' : 'closed');
     v.price = o.price ? money(o.price) : t('free');
     show.noaccess = !!o.noAccess;
+    show.broken = !!o.broken;
+    if (o.broken) { v.broken = t(S.staff && S.staff.mech ? 'broken_mech' : 'broken_none'); v.repair = t('repair_now', money(repairCost(o))); }
     if (st) {
       v.worth = t('guests_pay', money(Math.round(rideWorth(st.E) * 2) / 2));
       const bz = buzz(o), pc = Math.round(Math.abs(bz - 1) * 100);
@@ -981,7 +1052,7 @@ function panelValues() {
       v.age = bz > 1 ? t('age_new', pc) : t('age_old', pc); v.reno = t('renovate', money(renovateCost(o)));
       for (const k of ['E', 'I', 'Q']) { v[k] = num(st[k], 1) + ' ' + word(st[k]); w[k] = Math.min(100, st[k] * 10); }
       v.queue = num(o.queue.length); v.cap = num(isC ? coasterCap(o) * trainsOf(o) : RIDES[o.type].cap);
-      if (isC) { v.trains = trainsOf(o) + ' / ' + maxTrains(o); v.trainhint = t(maxTrains(o) > 1 ? 'train_hint' : 'train_short', money(trainCost(o))); }
+      if (isC) { v.trains = trainsOf(o) + ' / ' + maxTrains(o); v.trainhint = t((maxTrains(o) > 1 ? 'train_hint' : 'train_short') + (kindOf(o) === 'flume' ? '_boat' : ''), money(trainCost(o))); }
     }
     if (isC && o.sim) {
       const s = o.sim;
@@ -995,6 +1066,7 @@ function panelValues() {
     const g = S.gmap && S.gmap.get(p.id);
     if (!g) { v.thoughts = `<li>${esc(t('g_gone'))}</li>`; return { v, w, show, html: { thoughts: 1 } }; }
     for (const k of ['happy', 'hunger', 'thirst', 'toilet', 'nausea', 'energy']) { v[k] = num(g[k]) + '%'; w[k] = g[k]; }
+    v.doing = doingText(g);
     v.cash = money(Math.max(0, Math.round(g.cash))); v.rides = num(g.rides);
     v.thoughts = g.thoughts.length ? g.thoughts.map((th) => `<li>${esc(thoughtText(th))}</li>`).join('') : `<li>${esc(t('g_nothoughts'))}</li>`;
     return { v, w, show, html: { thoughts: 1 } };
@@ -1047,6 +1119,21 @@ function panelValues() {
     const html = {};
     for (const id in S.objs) if (S.objs[id].kind !== 'stall') html['q' + id] = 1;
     return { v, w, show, html, dots: 1 };
+  } else if (p.type === 'staff') {
+    const lit = S.litter || 0;
+    for (const k of STAFF_ORDER) v['n_' + k] = String(S.staff[k] | 0);
+    w.tidy = Math.max(4, 100 - Math.min(100, (lit / 90) * 100));
+    v.tidy = t(lit < 8 ? 'tidy_3' : lit < 30 ? 'tidy_2' : lit < 65 ? 'tidy_1' : 'tidy_0');
+    let nb = 0;
+    for (const id in S.objs) if (S.objs[id].broken) nb++;
+    v.wages = S.sandbox ? t('free') : t('per_month', money(wages())); v.nbroken = num(nb);
+    show.dirty = lit >= 30 && !S.staff.clean; show.nomech = nb > 0 && !S.staff.mech;
+    return { v, w, show };
+  } else if (p.type === 'tasks') {
+    const c = S.ch.cur;
+    if (c) { w.ch = challengeProgress(c) * 100; v.chleft = t('ch_left', Math.max(0, Math.ceil((c.end - S.time) / 2))); }
+    v.chdone = num(S.ch.total || 0);
+    return { v, w, show };
   } else if (p.type === 'room') {
     v.code = room.code;
     v.count = room.players.length + ' / ' + MAX_PLAYERS;
@@ -1065,6 +1152,7 @@ function panelSig() {
   const p = panel;
   if (p.type === 'obj') { const o = S.objs[p.id]; return o ? [o.closed, o.sim && o.sim.ok, o.I > 9, lang].join() : 'x'; }
   if (p.type === 'goals') return [S.goal, S.goalsDone, S.stars, lang].join();
+  if (p.type === 'tasks') { const C = S.ch; return [C.cur ? C.cur.k + C.cur.start : '', C.offers.map((o) => o.k + o.n).join(), lang].join('|'); }
   if (p.type === 'research') return [researchNext() < 0, lang].join();
   if (p.type === 'park') return Object.keys(S.objs).join() + lang;
   if (p.type === 'room') return room.code + lang;
@@ -1099,7 +1187,7 @@ export function refreshPanel() {
     if (val !== undefined) {
       el.style.width = val + '%';
       const k = el.dataset.w;
-      if (k === 'happy' || k === 'energy') el.style.background = val < 30 ? '#ef476f' : val < 60 ? '#ffb703' : '#06d6a0';
+      if (k === 'happy' || k === 'energy' || k === 'tidy') el.style.background = val < 30 ? '#ef476f' : val < 60 ? '#ffb703' : '#06d6a0';
       else if (k === 'hunger' || k === 'thirst' || k === 'toilet' || k === 'nausea') el.style.background = val > 75 ? '#ef476f' : val > 50 ? '#ffb703' : '#3b8ed0';
       else if (k === 'I' || k === 'Q') el.style.background = val > 90 ? '#ef476f' : val > 60 ? '#ffb703' : '#3b8ed0';
       else if (k === 'E') el.style.background = '#06d6a0';
@@ -1116,6 +1204,20 @@ function onPanel(e) {
   const a = b.dataset.act;
   sfx('click');
   if (a === 'close') { closePanel(); return; }
+  if (a.startsWith('hub:')) { if (a.slice(4) !== panel.type) openPanel(a.slice(4)); return; }
+  if (panel.type === 'staff') {
+    const k = a.slice(5), n = S.staff[k] | 0;
+    if (a.startsWith('hire:')) {
+      if (n >= STAFF[k].max) { sfx('error'); toast(t('st_max'), 'bad'); } else { S.staff = { ...S.staff, [k]: n + 1 }; sfx('place'); }
+    } else if (a.startsWith('fire:') && n > 0) S.staff = { ...S.staff, [k]: n - 1 };
+    syncCrew();
+  } else if (panel.type === 'tasks') {
+    if (a.startsWith('chgo:')) pickChallenge(+a.slice(5));
+    else if (a === 'chdrop') {
+      dialog(`<p>${esc(t('ch_drop_q'))}</p>`, [{ label: t('no'), value: 0 }, { label: t('ch_drop'), cls: 'red', value: 1 }]).then((yes) => { if (yes) pickChallenge(-1); });
+      return;
+    }
+  }
   if (panel.type === 'obj') {
     const o = S.objs[panel.id];
     if (!o) return;
@@ -1123,6 +1225,10 @@ function onPanel(e) {
     else if (a === 'price+') { o.price = Math.min(30, o.price + 0.5); o.priceSet = 1; }
     else if (a === 'price-') { o.price = Math.max(0, o.price - 0.5); o.priceSet = 1; }
     else if (a === 'demolish') askDemolish(o.id);
+    else if (a === 'repair') {
+      const r = repairNow(o);
+      if (r.ok) { sfx('cash'); toast(t('repaired', objName(o)), 'good'); } else fail(r);
+    }
     else if (a === 'edit') enterEditor(o.id);
     else if (a === 'test') {
       if (o.st !== 'idle') { o.open = false; toast(t('closed')); }
@@ -1146,7 +1252,6 @@ function onPanel(e) {
       if (trainsOf(o) > 1) { const cost = trainCost(o); earn(Math.round(cost / 2), 'build'); o.cost -= cost; o.trains = trainsOf(o) - 1; }
     } else if (a.startsWith('col')) { o.col = +a.slice(3); for (const pc of o.pieces) pc.geo = null; }
   } else if (panel.type === 'park') {
-    if (a === 'goals') { openPanel('goals'); return; }
     if (a === 'entrance') ui.camTarget = [isoX(S.ent.x + 0.5, S.ent.y - 5), isoY(S.ent.x + 0.5, S.ent.y - 5, 2)];
     else if (a === 'go') {
       const o = S.objs[b.dataset.id];
@@ -1165,8 +1270,6 @@ function onPanel(e) {
       if (!canAfford(600)) { fail({ why: 'e_money' }); return; }
       spend(600, 'marketing'); S.marketing = 3; sfx('cash');
     }
-  } else if (panel.type === 'goals') {
-    if (a === 'park') { openPanel('park'); return; }
   } else if (panel.type === 'research') {
     if (a.startsWith('rl')) S.research.level = +a.slice(2);
   } else if (panel.type === 'room') {
@@ -1174,6 +1277,8 @@ function onPanel(e) {
     if (a === 'mpleave') { ui.hooks.leave(); return; }
   } else if (panel.type === 'settings') {
     if (a === 'together') { ui.hooks.together(); return; }
+    if (a === 'photo') { setPhoto(true); return; }
+    if (a === 'share') { ui.hooks.share(); return; }
     if (a === 'music' || a === 'sfx' || a === 'lang' || a === 'save' || a === 'tomenu' || a === 'night' || a === 'rename') ui.hooks[a]();
     else if (a === 'help') showHelp();
   }
@@ -1289,9 +1394,28 @@ export function handleEvents() {
       const o = S.objs[e.id];
       if (o && e.sum > 0 && cam.zoom >= 0.5) { const [x, y] = objCenter(o); floatText(x, y - 30, '+' + money(Math.round(e.sum))); }
       if (o && ui.follow === e.id) sfx('whoosh');
+      else if (o && o.kind === 'coaster' && kindOf(o) === 'train' && audio.sfx) {
+        // the engine whistles as it sets off, if it is on screen
+        const [x, y] = objCenter(o), px = (x - cam.x) * cam.zoom + view.w / 2, py = (y - cam.y) * cam.zoom + view.h / 2;
+        if (px > 0 && py > 0 && px < view.w && py < view.h) sfx('toot', Math.max(0.3, Math.min(0.8, cam.zoom * 0.6)));
+      }
     } else if (e.type === 'fireworks') toast(t('fireworks'), 'good');
     else if (e.type === 'event') { toast(t('ev_' + e.id), 'good'); sfx('unlock'); }
-    else if (e.type === 'eventend') toast(e.id === 'critic' ? t(e.good ? 'evend_critic_good' : 'evend_critic_bad', money(e.prize)) : t('evend_' + e.id), e.good ? '' : 'bad');
+    else if (e.type === 'eventend') toast(e.id === 'critic' || e.id === 'tv' ? t('evend_' + e.id + (e.good ? '_good' : '_bad'), money(e.prize)) : t('evend_' + e.id), e.good ? '' : 'bad');
+    else if (e.type === 'broken') {
+      const o = S.objs[e.id];
+      if (o) { toast(t(S.staff.mech ? 'broke_mech' : 'broke_none', objName(o)), 'bad'); if (!S.staff.mech) sfx('error'); }
+    } else if (e.type === 'fixed') {
+      const o = S.objs[e.id];
+      if (o) { toast(t('repaired', objName(o)), 'good'); const [x, y] = objCenter(o); burst(x, y - 20, 'star', 8); }
+    } else if (e.type === 'tip') toast(t('tip_' + e.id), 'bad');
+    else if (e.type === 'staffnew') {
+      dialog(`<h2>${esc(t('staff_new_title'))}</h2><p>${esc(t('staff_new', e.clean, e.mech))}</p>`, [{ label: t('ok'), cls: 'yellow', value: 1 }]);
+    } else if (e.type === 'chstart') { sfx('unlock'); if (panel && panel.type === 'tasks') panel.sig = ''; }
+    else if (e.type === 'chdone') {
+      toast(t('ch_done', money(e.reward)), 'good'); sfx('goal'); confetti(view.w, view.h, 90);
+      ui.hooks.month();
+    } else if (e.type === 'chfail') toast(t('ch_fail'), 'bad');
     else if (e.type === 'year') {
       sfx('goal'); if (e.won.length) confetti(view.w, view.h, 100);
       dialog(`<h2>${esc(t('year_title', e.year))}</h2><div class="facts"><div>${esc(t('year_guests'))}<b>${num(e.guests)}</b></div><div>${esc(t('year_income'))}<b>${money(e.income)}</b></div></div>
@@ -1348,6 +1472,8 @@ export function updateSounds(dt) {
       if (falling && !r.scr && screamT <= 0 && (r.riders ? r.riders.length : 0) > 0) { sfx('scream', vol); screamT = 1.6; }
       r.scr = falling;
       if (v > 19 && !r.wsh) { sfx('rush', vol * 0.8); r.wsh = true; } else if (v < 13) r.wsh = false;
+      // a boat hits the water at the foot of a drop
+      if (kindOf(c) === 'flume') { const wet = v > 6.5 && p.h0 === p.h1 && !p.chain; if (wet && !r.spl) sfx('splash', vol); r.spl = wet || (r.spl && v > 4.5); }
     }
   }
   if (lift && clackT <= 0) { sfx('clack', lift); clackT = 0.15; }
@@ -1392,6 +1518,7 @@ function tap(px, py, touch) {
     if (pi !== ui.pick) { ui.pick = pi; sfx('click'); refreshBuilder(); }
     return;
   }
+  if (ui.photo) return;
   const tile = pickTile(px, py);
   if (tile) setCursor(tile.x, tile.y);
   if (ui.tool === 'inspect') {
@@ -1544,11 +1671,11 @@ function onWheel(e) {
 }
 const keys = new Set();
 const BUILD_KEYS = {
-  arrowleft: 'l', arrowup: 's', arrowright: 'r', arrowdown: 'undo', backspace: 'undo', z: 'undo', c: 'chain', b: 'bank', v: 'wide',
+  arrowleft: 'l', arrowup: 's', arrowright: 'r', arrowdown: 'undo', backspace: 'undo', z: 'undo', c: 'chain', b: 'bank', v: 'wide', p: 'photo', h: 'stop',
   l: 'loop', k: 'cork', f: 'auto', t: 'test', enter: 'done', e: 'up', q: 'down', 1: 'slope-2', 2: 'slope-1', 3: 'slope0', 4: 'slope1', 5: 'slope2',
 };
 function onKey(e) {
-  if (e.target.tagName === 'INPUT' || els.hud.hidden) return;
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || els.hud.hidden) return;
   if (e.type === 'keyup') { keys.delete(e.key.toLowerCase()); return; }
   const k = e.key.toLowerCase();
   if (!els.modal.hidden) { if (k === 'escape' || k === 'enter') els.modal.click(); return; }
@@ -1558,7 +1685,8 @@ function onKey(e) {
   if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd'].includes(k)) { keys.add(k); e.preventDefault(); return; }
   if (k === 'r') rotate();
   else if (k === 'escape') {
-    if (ui.area) { cancelArea(); mode = 'tap'; for (const p of pointers.values()) p.moved = true; }
+    if (ui.photo) setPhoto(false);
+    else if (ui.area) { cancelArea(); mode = 'tap'; for (const p of pointers.values()) p.moved = true; }
     else if (ui.pending) { ui.pending = null; ui.ghost = null; showConfirm(); }
     else if (ui.editing) exitEditor();
     else if (ui.tool !== 'inspect') selectTool('inspect');
@@ -1600,6 +1728,35 @@ export function moveCamera(dt) {
   clampCam();
   layoutHandles();
 }
+// ---------- photo mode ----------
+// Everything but the park is hidden, and a little bar offers day or night, the shutter and the way back.
+export function setPhoto(on) {
+  ui.photo = !!on;
+  els.hud.classList.toggle('photo', ui.photo);
+  els.photobar.hidden = !ui.photo;
+  if (!on) { look.dark = null; return; }
+  closePanel();
+  if (ui.tool !== 'inspect') selectTool('inspect');
+  ui.ghost = null; ui.handle = null;
+  shownAt = performance.now();
+  buildPhotoBar();
+}
+function buildPhotoBar() {
+  const night = look.dark !== null && look.dark > 0.5;
+  els.photobar.innerHTML = `<button class="btn" data-ph="light" title="${esc(t(night ? 'photo_day' : 'photo_night'))}">${icon(night ? 'wx_sun' : 'wx_moon')}<span>${esc(t(night ? 'photo_day' : 'photo_night'))}</span></button>
+    <button class="btn yellow" data-ph="snap">${icon('camera')}<span>${esc(t('photo_take'))}</span></button>
+    <button class="btn" data-ph="x" title="${esc(t('close'))}" aria-label="${esc(t('close'))}">${icon('close')}</button>`;
+}
+function onPhotoBar(e) {
+  const b = e.target.closest('button[data-ph]');
+  if (!b || performance.now() - shownAt < 350) return;
+  sfx('click');
+  const a = b.dataset.ph;
+  if (a === 'x') setPhoto(false);
+  else if (a === 'light') { look.dark = look.dark !== null && look.dark > 0.5 ? 0 : 1; buildPhotoBar(); }
+  else ui.hooks.snap();
+}
+
 export function centerOn(x, y, z) {
   cam.x = isoX(x, y); cam.y = isoY(x, y, z);
   clampCam();
@@ -1611,7 +1768,7 @@ export function initUI(hooks) {
   els = {
     canvas: $('c'), hud: $('hud'), top: $('top'), bottom: $('bottom'), tools: $('tools'), tray: $('tray'), panel: $('panel'),
     toasts: $('toasts'), modal: $('modal'), confirm: $('confirm'), builder: $('builder'), tutorial: $('tutorial'),
-    speed: $('speed'), date: $('st-date'), testhud: $('testhud'), info: $('info'), undo: $('undo'),
+    speed: $('speed'), date: $('st-date'), testhud: $('testhud'), info: $('info'), undo: $('undo'), photobar: $('photobar'),
     dateText: $('st-date').querySelector('span'), wx: $('st-date').querySelector('i'),
   };
   fxHooks.bang = () => sfx('boom');
@@ -1647,6 +1804,7 @@ export function initUI(hooks) {
     if (b) selectItem(b.dataset.item);
   });
   els.confirm.addEventListener('click', onConfirm);
+  els.photobar.addEventListener('click', onPhotoBar);
   els.builder.addEventListener('click', onBuilder);
   els.panel.addEventListener('click', onPanel);
   els.top.addEventListener('click', (e) => {
@@ -1684,6 +1842,7 @@ export function resetUI() {
   panel = null; els.panel.hidden = true; els.hud.classList.remove('has-panel'); els.builder.hidden = true; els.tools.hidden = false; els.confirm.hidden = true;
   els.testhud.hidden = true; els.toasts.innerHTML = ''; els.modal.hidden = true;
   accessPv = -1; lastTut = -1; traySig = '';
+  ui.photo = false; look.dark = null; els.hud.classList.remove('photo'); els.photobar.hidden = true;
   pointers.clear(); mode = null; els.info.hidden = true;
   buildHUD();
 }

@@ -8,11 +8,11 @@ import { S, net, emit, removeObj, registerPiece, unregisterPiece, countScenery, 
 import { recompute } from './coaster.js';
 import { coasterCap } from './sim.js';
 
-const LAYERS = ['h', 'water', 'path', 'scn'];
+const LAYERS = ['h', 'water', 'path', 'scn', 'lit']; // lit = litter: only the host's game drops it and sweeps it up
 // fields of an object that only matter while the game runs, are worked out again from the rest,
 // or are counted by the host's game alone (customers, income)
 const SKIP = new Set(['queue', 'riders', 'st', 'timer', 'sim', 'geo', 'test', 'pop', 'spin', 'anim', 'noAccess', 'runs', 'gap',
-  'load', 'runT', 'capacity', 'customers', 'income', 'pieces']);
+  'load', 'runT', 'capacity', 'customers', 'income', 'pieces', 'plats', 'platsN', 'fixer']);
 // A track's ratings count the scenery round it when they are worked out, so two games can come
 // to slightly different numbers. They are shared as they are, and kept when the track is worked out again here.
 const RATING = ['E', 'I', 'Q', 'loops', 'inv', 'price'];
@@ -25,10 +25,11 @@ export function putRatings(list) {
   }
 }
 // settings any player can change; names holds the running numbers of ride names
-const SETS = ['fee', 'open', 'name', 'marketing', 'speed', 'rlevel', 'names'];
+// (chPick is a player's choice of challenge: the host's game takes it up)
+const SETS = ['fee', 'open', 'name', 'marketing', 'speed', 'rlevel', 'names', 'staff', 'chPick'];
 // what the host's game keeps up to date and sends about once a second
 const HOST_KEYS = ['cash', 'loan', 'rating', 'peakGuests', 'unlocked', 'goal', 'goalsDone', 'stars', 'ach', 'fin', 'wx', 'event',
-  'evNext', 'yr', 'awards', 'thoughts', 'turnedAway'];
+  'evNext', 'yr', 'awards', 'thoughts', 'turnedAway', 'ch'];
 
 const pieceRow = (p) => [p.t, p.x, p.y, p.d, p.h0, p.h1, p.chain ? 1 : 0, p.bank ? 1 : 0, p.cost || 0];
 const rowPiece = ([t, x, y, d, h0, h1, chain, bank, cost]) => ({ t, x, y, d, h0, h1, chain: !!chain, bank: !!bank, cost });
@@ -70,11 +71,11 @@ export const lastSeq = () => seq;
 export function diff(deltas) {
   if (!base) return null;
   const d = {}, tiles = [];
-  const { h, water, path, scn } = S, bh = base.h, bw = base.water, bp = base.path, bs = base.scn;
+  const { h, water, path, scn, lit } = S, bh = base.h, bw = base.water, bp = base.path, bs = base.scn, bl = base.lit;
   for (let i = 0; i < N * N; i++) {
-    if (h[i] !== bh[i] || water[i] !== bw[i] || path[i] !== bp[i] || scn[i] !== bs[i]) {
-      tiles.push([i, h[i], water[i], path[i], scn[i]]);
-      bh[i] = h[i]; bw[i] = water[i]; bp[i] = path[i]; bs[i] = scn[i];
+    if (h[i] !== bh[i] || water[i] !== bw[i] || path[i] !== bp[i] || scn[i] !== bs[i] || lit[i] !== bl[i]) {
+      tiles.push([i, h[i], water[i], path[i], scn[i], lit[i]]);
+      bh[i] = h[i]; bw[i] = water[i]; bp[i] = path[i]; bs[i] = scn[i]; bl[i] = lit[i];
     }
   }
   if (tiles.length) d.tiles = tiles;
@@ -118,13 +119,14 @@ export function apply(d, by, host) {
   const old = (k) => by === net.slot && (sent.get(k) || 0) > d.seq;
   if (d.tiles) {
     let tv = false, any = false;
-    for (const [i, h0, w0, p0, s0] of d.tiles) {
+    for (const [i, h0, w0, p0, s0, l0] of d.tiles) {
       if (!(i >= 0 && i < N * N) || old('t' + i)) continue;
       // (a friend's game may be another version: keep only what this one can show)
       const h = Math.max(0, Math.min(MAX_TERRAIN, h0 | 0)), w = w0 ? 1 : 0, p = p0 === 1 || p0 === 2 ? p0 : 0, s = SCENERY[s0] ? s0 : 0;
       if (S.h[i] !== h || S.water[i] !== w) tv = true;
       if (S.h[i] !== h || S.water[i] !== w || S.path[i] !== p || S.scn[i] !== s) any = true;
       S.h[i] = base.h[i] = h; S.water[i] = base.water[i] = w; S.path[i] = base.path[i] = p; S.scn[i] = base.scn[i] = s;
+      if (l0 !== undefined) S.lit[i] = base.lit[i] = p ? Math.max(0, Math.min(3, l0 | 0)) : 0; // (litter needs no new picture of the ground)
     }
     if (any) { countScenery(); S.pv++; if (tv) S.tv++; }
   }
@@ -150,7 +152,7 @@ export function apply(d, by, host) {
   }
 }
 
-const PIECES = new Set(['station', 's', 'l', 'r', 'wl', 'wr', 'loop', 'cork', 'boost', 'brake']);
+const PIECES = new Set(['station', 's', 'l', 'r', 'wl', 'wr', 'loop', 'cork', 'boost', 'brake', 'photo', 'stop']);
 /** An object this version of the game knows how to run and draw. */
 function known(p) {
   if (!p || !(p.id > 0)) return false;
@@ -178,6 +180,7 @@ function putObj(p) {
       recompute(o);
       for (const k of RATING) if (p[k] !== undefined) o[k] = p[k];
     } else for (const pc of o.pieces) pc.geo = null; // a new colour, say
+    o.plats = null;
     o.capacity = coasterCap(o);
   } else {
     for (let j = 0; j < o.h; j++) for (let i = 0; i < o.w; i++) S.occ[idx(o.x + i, o.y + j)] = o.id;

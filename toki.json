@@ -1,27 +1,31 @@
 {
   "title": "Coastr",
   "slug": "coastr",
-  "description": "Build your own theme park! Lay paths, place rides and food stalls, and design roller coasters piece by piece with lift hills, steep drops, loops, corkscrews, wide banked turns and launches. Every coaster gets excitement, intensity and nausea ratings as soon as its track is complete, and you can follow the train round the track. Play four parks on very different maps (meadow, lagoon, desert and snowy mountain), earn stars, research new rides and watch your park light up at night. Or build freely in the sandbox.",
-  "description_de": "Bau deinen eigenen Freizeitpark! Leg Wege an, stell Attraktionen und Essensstände auf und entwirf Achterbahnen Stück für Stück mit Lifthügeln, steilen Abfahrten, Loopings, Schrauben, weiten Steilkurven und Katapultstarts. Jede Bahn bekommt Wertungen für Spannung, Intensität und Übelkeit, sobald die Strecke fertig ist, und du kannst dem Zug auf seiner Runde folgen. Spiel vier Parks auf ganz verschiedenen Karten (Wiese, Lagune, Wüste und Schneeberg), verdiene Sterne, erforsche neue Attraktionen und sieh zu, wie dein Park nachts leuchtet. Oder bau frei drauflos.",
+  "description": "Build your own theme park! Lay paths, place rides and food stalls, and design roller coasters piece by piece with lift hills, steep drops, loops, corkscrews, wide banked turns and launches. Build a log flume with splashing drops and a little steam railway that carries guests across your park. Hire handymen, mechanics and entertainers, take on challenges for rewards, and watch your park light up at night. Play four parks on very different maps (meadow, lagoon, desert and snowy mountain), earn stars and research new rides, or build freely in the sandbox, alone or together with friends.",
+  "description_de": "Bau deinen eigenen Freizeitpark! Leg Wege an, stell Attraktionen und Essensstände auf und entwirf Achterbahnen Stück für Stück mit Lifthügeln, steilen Abfahrten, Loopings, Schrauben, weiten Steilkurven und Katapultstarts. Bau eine Wildwasserbahn mit spritzenden Abfahrten und eine kleine Dampfeisenbahn, die Gäste durch deinen Park fährt. Stell Reinigungskräfte, Mechaniker und Maskottchen ein, löse Aufgaben für Belohnungen und sieh zu, wie dein Park nachts leuchtet. Spiel vier Parks auf ganz verschiedenen Karten (Wiese, Lagune, Wüste und Schneeberg), verdiene Sterne und erforsche neue Attraktionen, oder bau frei drauflos, allein oder zusammen mit Freunden.",
   "controls": "Mouse: drag to move the map, scroll to zoom, click to build, drag to build a line of path or a whole area. Touch: drag to move, pinch to zoom, tap to build, then drag from the white dot to draw a line. Coasters: tap the arrows on the map, or use the arrow keys; tap a piece of track to change it. R turns a ride, Ctrl+Z takes back the last thing built, Esc cancels, Space pauses.",
   "category": "strategy",
   "engine": "HTML5 Canvas (plain JavaScript)",
-  "version": "2.3",
-  "update_title": "Smoother coasters and a cleaner park",
+  "version": "3.0",
+  "update_title": "Coastr 3.0: water rides, a railway, staff and challenges",
   "notes": [
-    "Coaster tracks now curve smoothly into and out of every hill, drop and lift hill, with no sharp corners",
-    "Loops have a new teardrop shape, and trains no longer disappear while going through them",
-    "Trains lean and tip smoothly through bends, hills and loops instead of in little jerks",
-    "While you build a coaster, a side view shows the track's height and how fast the train goes",
-    "Rough spots on a coaster and places where the train would get stuck now show as big red dots",
-    "Many drawing fixes: guests no longer lose their heads in front of rides, posts no longer go through bridges, and icons, coastlines and the park entrance look cleaner",
-    "The goals button is back on the smallest phones"
+    "New log flume: boats in a water trough, pulled up by lifts and sent down drops with a big splash",
+    "New park railway: a little steam train that carries guests between as many platforms as you build",
+    "New hyper coaster with giant hills, an on-ride photo spot for any coaster, and two new ready-made designs",
+    "Five new rides (Flying Planes, Mini Golf, Fun House, 4D Cinema, Meteor), three new stalls and twelve new kinds of scenery",
+    "Staff: guests now drop litter and rides break down now and then, so hire handymen, mechanics and entertainers and put up litter bins. Parks you already have get the staff they need",
+    "Challenges: optional tasks with a time limit and a reward, with their own high-score list",
+    "Photo mode: hide all the buttons, switch between day and night and save a picture of your park",
+    "Share a park as a code that friends can load into their own game",
+    "Goals, the park map, staff and challenges are now tabs of one panel",
+    "Two new park events, three new yearly awards and six new achievements"
   ],
   "cover_image": "cover.png",
   "screenshots": [
     "shots/1.png",
     "shots/2.png",
-    "shots/3.png"
+    "shots/3.png",
+    "shots/4.png"
   ],
   "score_order": "high",
   "score_format": "points",
@@ -39,6 +43,13 @@
       "id": "guests",
       "name": "Most guests at once",
       "name_de": "Meiste Gäste gleichzeitig",
+      "score_order": "high",
+      "score_format": "points"
+    },
+    {
+      "id": "challenges",
+      "name": "Challenges won in one park",
+      "name_de": "Geschaffte Aufgaben in einem Park",
       "score_order": "high",
       "score_format": "points"
     }
@@ -195,6 +206,54 @@
       "description": "Open a coaster that reaches 100 km/h.",
       "description_de": "Öffne eine Achterbahn, die 100 km/h erreicht.",
       "icon": "💨"
+    },
+    {
+      "id": "splash",
+      "name": "Splash!",
+      "name_de": "Platsch!",
+      "description": "Open your first log flume.",
+      "description_de": "Öffne deine erste Wildwasserbahn.",
+      "icon": "💦"
+    },
+    {
+      "id": "all-aboard",
+      "name": "All aboard",
+      "name_de": "Alles einsteigen",
+      "description": "Open a park railway with at least two platforms.",
+      "description_de": "Öffne eine Parkeisenbahn mit mindestens zwei Bahnsteigen.",
+      "icon": "🚂"
+    },
+    {
+      "id": "giant",
+      "name": "Giant",
+      "name_de": "Gigant",
+      "description": "Open a coaster that climbs 60 metres above its station.",
+      "description_de": "Öffne eine Achterbahn, die 60 Meter über ihre Station steigt.",
+      "icon": "🏔️"
+    },
+    {
+      "id": "spotless",
+      "name": "Spotless",
+      "name_de": "Blitzsauber",
+      "description": "End a month with 100 guests in the park and next to no litter.",
+      "description_de": "Beende einen Monat mit 100 Gästen im Park und fast ohne Müll.",
+      "icon": "🧹"
+    },
+    {
+      "id": "challenger",
+      "name": "Challenger",
+      "name_de": "Herausforderer",
+      "description": "Win your first challenge.",
+      "description_de": "Schaff deine erste Aufgabe.",
+      "icon": "🎯"
+    },
+    {
+      "id": "challenge-10",
+      "name": "Challenge champion",
+      "name_de": "Aufgabenmeister",
+      "description": "Win 10 challenges in one park.",
+      "description_de": "Schaff 10 Aufgaben in einem Park.",
+      "icon": "🏅"
     }
   ]
 }

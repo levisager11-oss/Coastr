@@ -57,6 +57,8 @@ const SFX = {
   // a handful of voices that rise and fall together
   scream: (t) => [0, 1, 2, 3].forEach((k) => { const f = 820 + k * 140 + Math.random() * 60; tone(f, t + k * 0.04, 0.16, 'triangle', 0.035, sfxGain, f * 1.25); tone(f * 1.25, t + 0.16 + k * 0.04, 0.5, 'triangle', 0.04, sfxGain, f * 0.8); }),
   rush: (t) => noise(t, 0.9, 0.16, 500, 2400),
+  splash: (t) => { noise(t, 0.5, 0.2, 3200, 600); tone(220, t, 0.18, 'sine', 0.12, sfxGain, 90); },
+  toot: (t) => { tone(784, t, 0.16, 'square', 0.05, sfxGain); tone(988, t, 0.16, 'square', 0.04, sfxGain); tone(784, t + 0.22, 0.34, 'square', 0.05, sfxGain); tone(988, t + 0.22, 0.34, 'square', 0.04, sfxGain); },
 };
 // a burst of filtered noise that sweeps downwards: fireworks
 let noiseBuf = null;

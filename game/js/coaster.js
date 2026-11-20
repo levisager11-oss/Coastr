@@ -1,5 +1,5 @@
 // Coaster tracks: pieces, geometry, physics and ratings.
-import { N, DX, DY, COASTERS, SCENERY } from './data.js';
+import { N, DX, DY, COASTERS, SCENERY, isPlat } from './data.js';
 import {
   S, idx, inB, canAfford, spend, earn, registerPiece, unregisterPiece, nameFor, emit, pieceCells, pieceTiles, walkH, removeObj, newId,
 } from './world.js';
@@ -24,9 +24,11 @@ const CORK_Z = 1.0; // half its height, in levels
 export const STATION_HEAD = 10; // where the front of the train waits, metres from the station start
 export const CAR_LEN = 2.6;
 const LAUNCH_ZONE = 9; // metres of launch track right after the waiting train
+const DWELL = 6; // seconds a railway's train waits at each of its further platforms
 
 // Piece types: station, s (straight), l / r (tight turns), wl / wr (wide turns over three tiles),
-// loop and cork (two tiles long, upside down), boost, brake.
+// loop and cork (two tiles long, upside down), boost, brake, photo (a camera that snaps the riders),
+// stop (a further platform of a railway).
 export const isTurn = (p) => p.t === 'l' || p.t === 'r' || p.t === 'wl' || p.t === 'wr';
 export const isWide = (p) => p.t === 'wl' || p.t === 'wr';
 export const isLeft = (p) => p.t === 'l' || p.t === 'wl';
@@ -50,7 +52,8 @@ function isClosed(c) {
 function pieceCost(c, p) {
   const T = COASTERS[c.ctype];
   let cost = T.piece;
-  if (p.t === 'station') cost = T.station / 3;
+  if (isPlat(p)) cost = T.station / 3;
+  else if (p.t === 'photo') cost *= 2.5;
   else if (p.t === 'loop') cost *= 5;
   else if (p.t === 'cork') cost *= 6;
   else if (isWide(p)) cost *= 2.4;
@@ -72,8 +75,10 @@ function checkPiece(c, p, ignoreMoney) {
   if (isTurn(p) && Math.abs(g) > 1) return no('e_steepturn');
   if (p.t === 'loop' && !T.loop) return no('e_noloop');
   if (p.t === 'cork' && !T.cork) return no('e_noloop');
-  if ((isInv(p) || p.t === 'boost' || p.t === 'brake' || p.t === 'station') && slope) return no('e_flatonly');
+  if ((isInv(p) || p.t === 'boost' || p.t === 'brake' || p.t === 'photo' || isPlat(p)) && slope) return no('e_flatonly');
   if (p.t === 'boost' && !S.unlocked.booster) return no('e_locked');
+  if (p.t === 'photo' && !S.unlocked.photo) return no('e_locked');
+  if ((p.t === 'boost' && T.noBoost) || (p.t === 'brake' && T.noBrake) || (p.t === 'photo' && T.kind) || (p.t === 'stop' && T.kind !== 'train')) return no('e_cannot');
   const z0 = Math.min(p.h0, p.h1), z1 = Math.max(p.h0, p.h1);
   if (z0 < 0) return no('e_low');
   if (z1 - base > T.maxH) return no('e_high');
@@ -152,7 +157,7 @@ export function buildPiece(c, spec) {
   const rise = isWide(spec) ? slope * 2 : slope; // a wide turn is longer, so it climbs two levels at the same steepness
   return {
     t: spec.t, x: e.x, y: e.y, d: e.d, h0: e.h, h1: e.h + rise,
-    chain: !!spec.chain && slope >= 0 && (spec.t === 's' || turn) && !T.launch,
+    chain: !!spec.chain && slope >= 0 && (spec.t === 's' || turn) && !T.launch && !T.noChain,
     bank: !!spec.bank && turn && T.bank,
   };
 }
@@ -190,6 +195,7 @@ function afterEdit(c) {
   c.closed = isClosed(c);
   if (!c.closed) { c.open = false; kickOut(c); }
   for (const p of c.pieces) p.geo = null;
+  c.plats = null;
   S.pv++;
   recompute(c);
   if (c.closed && !was) emit('closed', { id: c.id });
@@ -269,26 +275,32 @@ export function alterable(c, i) {
   if (!p || p.t === 'station') return null;
   const flat = p.h0 === p.h1;
   return {
-    chain: (p.t === 's' || isTurn(p)) && p.h1 >= p.h0 && !T.launch,
+    chain: (p.t === 's' || isTurn(p)) && p.h1 >= p.h0 && !T.launch && !T.noChain,
     bank: isTurn(p) && T.bank,
-    kind: flat && (p.t === 's' || p.t === 'brake' || p.t === 'boost'),
-    boost: flat && !!S.unlocked.booster && c.ctype !== 'mini',
+    kind: flat && (p.t === 's' || p.t === 'brake' || p.t === 'boost' || p.t === 'photo' || p.t === 'stop'),
+    brake: !T.noBrake,
+    boost: flat && !!S.unlocked.booster && c.ctype !== 'mini' && !T.noBoost,
+    photo: !!S.unlocked.photo && !T.kind,
+    stop: T.kind === 'train',
   };
 }
-/** Change a piece that is already built. what: 'chain' or 'bank' (switch on or off), or 's' / 'brake' / 'boost'. */
+/** Change a piece that is already built. what: 'chain' or 'bank' (switch on or off), or 's' / 'brake' / 'boost' / 'photo' / 'stop'. */
 export function alterPiece(c, i, what) {
   const a = alterable(c, i), p = c.pieces[i];
   if (!a) return no('e_station');
   const old = { t: p.t, chain: p.chain, bank: p.bank };
   if (what === 'chain' && a.chain) p.chain = !p.chain;
   else if (what === 'bank' && a.bank) p.bank = !p.bank;
-  else if ((what === 's' || what === 'brake' || (what === 'boost' && a.boost)) && a.kind) { p.t = what; p.chain = false; }
-  else return no(what === 'boost' ? 'e_locked' : 'e_cannot');
+  else if ((what === 's' || ((what === 'brake' || what === 'boost' || what === 'photo' || what === 'stop') && a[what])) && a.kind) { p.t = what; p.chain = false; }
+  else return no(what === 'boost' && !COASTERS[c.ctype].noBoost ? 'e_locked' : 'e_cannot');
   const cost = pieceCost(c, p), diff = cost - (p.cost || 0);
   if (diff > 0 && !canAfford(diff)) { Object.assign(p, old); return no('e_money'); }
   if (diff > 0) spend(diff, 'build'); else if (diff < 0) earn(-diff, 'build');
   p.cost = cost; c.cost += diff;
   for (const q of c.pieces) q.geo = null;
+  c.plats = null;
+  // (a platform is registered as one, so the ground under it cannot be dug away)
+  unregisterPiece(c, i); registerPiece(c, i);
   S.pv++;
   recompute(c);
   return OK;
@@ -306,7 +318,7 @@ export function autoFinish(c) {
   if (c.closed) return no('e_closed');
   // the way home is made of tight turns, so slow a fast train down first if there is room
   const before = c.pieces.length;
-  for (let k = 0; k < 5 && c.sim && c.sim.ok && c.sim.endV > 12; k++) {
+  for (let k = 0; k < 5 && c.sim && c.sim.ok && c.sim.endV > 12 && !COASTERS[c.ctype].noBrake; k++) {
     const p = buildPiece(c, { t: 'brake' });
     if (!checkPiece(c, p).ok) break;
     commitPiece(c, p);
@@ -539,6 +551,7 @@ export function recompute(c) {
   const s = new Float32Array(segs + 1), tt = new Float32Array(segs + 1), vv = new Float32Array(segs + 1);
   const gv = new Float32Array(segs + 1), gl = new Float32Array(segs + 1);
   let v = 3.5, stall = -1, phiPrev = 0, psiPrev = null, segsDone = 0;
+  const stops = [], flow2 = T.flow ? T.flow * T.flow : 0;
   let maxV = 0, maxGv = 1, minGv = 1, maxGl = 0, air = 0, drop = 0, bigDrop = 0, nDrops = 0, totalDrop = 0, maxH = 0;
   vv[0] = v;
   const base = c.pieces[0].h0;
@@ -547,15 +560,27 @@ export function recompute(c) {
     const ddx = (X[k2] - X[k]) * TILE_M, ddy = (Y[k2] - Y[k]) * TILE_M, dz = (Z[k2] - Z[k]) * UNIT_M;
     const dh = Math.hypot(ddx, ddy), ds = Math.hypot(dh, dz) || 0.001;
     let v2 = v * v - 2 * G * dz - 2 * T.mu * G * dh - 0.0009 * v * v * ds;
-    if (p.t === 'station') v2 = 3.5 * 3.5;
+    const plat = isPlat(p);
+    if (plat) v2 = 3.5 * 3.5;
     if (T.launch && s[k] >= STATION_HEAD && s[k] < STATION_HEAD + LAUNCH_ZONE) v2 = Math.max(v2, Math.min(T.launch * T.launch, v * v + 2 * 30 * ds));
-    else if (p.t === 'station') { /* held at walking pace */ }
+    else if (plat) { /* held at walking pace */ }
+    else if (T.powered) v2 = T.powered * T.powered; // a railway's engine keeps a steady pace
     else if (p.chain) v2 = Math.max(v2, 4 * 4);
+    else if (flow2 && dz < 0.002) {
+      // a boat: on the level the water slows a fast one down to the current, and the current carries a slow one along
+      if (dz > -0.002) v2 = flow2 + (v2 - flow2) * Math.exp(-ds / 4.5);
+      v2 = Math.max(v2, flow2);
+    }
     else if (p.t === 'boost') v2 = v > 24 ? v2 : Math.min(24 * 24, v2 + 2 * 11 * ds);
     else if (p.t === 'brake' && v2 > 36) v2 = Math.max(36, v2 - 2 * 12 * ds);
     if (v2 < 0.4) { stall = PI[k]; s[k + 1] = s[k] + ds; tt[k + 1] = tt[k] + 1; segsDone = k + 1; break; }
     const vn = Math.sqrt(v2);
     s[k + 1] = s[k] + ds; tt[k + 1] = tt[k] + ds / ((v + vn) / 2); vv[k + 1] = vn;
+    if (p.t === 'stop' && PI[k2] !== PI[k] && c.pieces[PI[k2]].t !== 'stop') {
+      // the end of a platform: the train stands here for a while (it creeps over this last bit of track)
+      stops.push({ pi: PI[k], t: tt[k + 1] + 0.6, s: s[k + 1] });
+      tt[k + 1] += DWELL;
+    }
     // g-forces
     const along = isInv(p) ? ddx * DX[p.d] + ddy * DY[p.d] : dh;
     const phi = Math.atan2(dz, along);
@@ -577,7 +602,7 @@ export function recompute(c) {
     phiPrev = phi;
     // in a corkscrew the seats turn with the track, so its little hump presses riders down rather than lifting them
     if (p.t === 'cork') gvert = 1 + Math.abs(gvert - Math.cos(phi)) * 0.6;
-    if (p.t === 'station') { gvert = 1; glat = 0; }
+    if (plat) { gvert = 1; glat = 0; }
     gv[k + 1] = gvert; gl[k + 1] = glat;
     if (vn > maxV) maxV = vn;
     maxH = Math.max(maxH, Z[k] - base);
@@ -606,7 +631,7 @@ export function recompute(c) {
   }
   for (let k = 3; k <= used; k++) {
     const p = c.pieces[PI[(k - 1) % n]];
-    if (p.t === 'station') continue;
+    if (isPlat(p)) continue;
     if (sg[k] > maxGv) maxGv = sg[k];
     if (sg[k] < minGv) minGv = sg[k];
     if (sl[k] > maxGl) maxGl = sl[k];
@@ -616,7 +641,7 @@ export function recompute(c) {
   gv.set(sg); gl.set(sl);
   const sim = {
     ok: stall < 0, stall, n, segs: used, closed: !!c.closed, X, Y, Z, PI, U, s, t: tt, v: vv, gv, gl,
-    L: s[used], T: tt[used], maxV, maxGv, minGv, maxGl, air, bigDrop, nDrops, maxH, endV: v,
+    L: s[used], T: tt[used], maxV, maxGv, minGv, maxGl, air, bigDrop, nDrops, maxH, endV: v, stops,
   };
   c.sim = sim;
   c.x = c.pieces[0].x; c.y = c.pieces[0].y;
@@ -626,12 +651,13 @@ export function recompute(c) {
 }
 
 function rate(c, sim) {
-  let loops = 0, corks = 0, turns = 0, banked = 0;
-  const seen = new Set();
+  let loops = 0, corks = 0, turns = 0, banked = 0, photos = 0;
+  const seen = new Set(), kind = COASTERS[c.ctype].kind;
   let scenic = 0;
   for (const p of c.pieces) {
     if (p.t === 'loop') loops++;
     if (p.t === 'cork') corks++;
+    if (p.t === 'photo') photos++;
     if (isTurn(p)) { turns++; if (p.bank) banked++; }
     for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
       const x = p.x + dx, y = p.y + dy;
@@ -650,12 +676,15 @@ function rate(c, sim) {
   let I = 0.4 + kmh / 30 + Math.max(0, sim.maxGv - 1) * 1.1 + sim.maxGl * 1.4 + inv * 0.65
     + Math.max(0, -sim.minGv) * 1.5;
   let Q = 0.2 + sim.maxGl * 1.2 + inv * 0.8 + turns * 0.04 + sim.T / 200 + Math.max(0, sim.maxGv - 3) * 0.6;
+  // a log flume is all about the splash at the bottom of its drops; a railway about the view and where it takes you
+  if (kind === 'flume') E += Math.min(1, sim.bigDrop / 10) + Math.min(0.4, sim.nDrops * 0.2);
+  if (kind === 'train') E += Math.min(0.9, scenic / 70) + Math.min(0.6, sim.stops.length * 0.3);
   if (I > 9) E -= (I - 9) * 0.8;
   const r2 = (n) => Math.round(Math.max(0, Math.min(15, n)) * 100) / 100;
   c.E = r2(E); c.I = r2(I); c.Q = r2(Q);
   // suggest a fair price until the player picks one
   if (!c.priceSet) c.price = Math.max(1, Math.round((1.5 + c.E * 1.6) * 0.8 * 2) / 2);
-  c.loops = loops; c.inv = inv;
+  c.loops = loops; c.inv = inv; c.photos = photos ? 1 : 0;
   sim.maxLat = sim.maxGl;
 }
 

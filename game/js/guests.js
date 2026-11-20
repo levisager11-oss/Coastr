@@ -1,6 +1,6 @@
 // Guests: walking, needs, choosing rides, buying things, thoughts.
-import { N, DX, DY, RIDES, STALLS, SCN } from './data.js';
-import { S, idx, inB, accessTiles, earn, walkH, net } from './world.js';
+import { N, DX, DY, RIDES, STALLS, SCN, COASTERS } from './data.js';
+import { S, idx, inB, accessTiles, earn, walkH, net, platforms } from './world.js';
 
 const FIRST = ['Mia', 'Noah', 'Emma', 'Leon', 'Lina', 'Finn', 'Sofia', 'Luca', 'Hanna', 'Ben', 'Lea', 'Elias', 'Nora',
   'Jonas', 'Ella', 'Paul', 'Maya', 'Tim', 'Zoe', 'Max', 'Ida', 'Liam', 'Anna', 'Felix', 'Clara', 'Omar', 'Yuki', 'Ravi',
@@ -85,6 +85,34 @@ export function rideUsable(o) {
   if (o.kind === 'coaster') return o.closed && o.sim && o.sim.ok;
   return o.kind === 'ride';
 }
+/** Which platform of a tracked ride the path tile i belongs to (0 = the station). */
+export function platAt(o, i) {
+  if (o.kind !== 'coaster') return 0;
+  const n = platforms(o).length;
+  for (let k = 1; k < n; k++) if (accessTiles(o, k).includes(i)) return k;
+  return 0;
+}
+// Litter bins: a guest with rubbish uses one that stands on or next to the tile they walk over.
+let bins = null, binsPv = -1;
+function nearBin(i) {
+  if (binsPv !== S.pv) {
+    bins = new Uint8Array(N * N); binsPv = S.pv;
+    for (let k = 0; k < N * N; k++) {
+      if (S.scn[k] !== SCN.bin) continue;
+      const x = k % N, y = (k / N) | 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (inB(x + dx, y + dy)) bins[idx(x + dx, y + dy)] = 1;
+    }
+  }
+  return bins[i];
+}
+/** A guest sets foot on a new tile: rubbish goes into a bin or, now and then, on the ground; litter spoils the mood. */
+function stepOn(g) {
+  const i = idx(g.tx, g.ty), l = S.lit[i];
+  if (l) { g.happy -= l >= 2 ? 0.45 : 0.12; if (l >= 2 && Math.random() < 0.12) think(g, 'th_litter'); }
+  if (!g.trash || net.quiet) return;
+  if (nearBin(i)) g.trash = 0;
+  else if (S.path[i] && Math.random() < 0.07) { if (S.lit[i] < 3) S.lit[i]++; g.trash = 0; }
+}
 // The queue line of a ride: queue-path tiles (kind 2) joined to its entrance, nearest first.
 let lines = new Map(), linesPv = -1;
 export function queueLine(o) {
@@ -123,7 +151,8 @@ export function queueMax(o) {
 const EMOTE = {
   th_great: 'smile', th_wow: 'star', th_sick: 'sick', th_expensive: 'money', th_wait: 'clock', th_nofood: 'need', th_nodrink: 'need',
   th_notoilet: 'need', th_norides: 'bored', th_broke: 'money', th_unhappy: 'angry', th_tired: 'zzz', th_rest: 'zzz', th_yum: 'heart',
-  th_gift: 'heart', th_hat: 'heart', th_fire: 'star',
+  th_gift: 'heart', th_hat: 'heart', th_fire: 'star', th_litter: 'angry', th_broken: 'bored', th_fun: 'smile', th_aid: 'heart',
+  th_splash: 'star', th_pretty: 'heart',
 };
 export function think(g, key, param) {
   if (g.cc > 0 && g.thoughts.length) return;
@@ -182,6 +211,13 @@ function chooseTarget(g, i) {
   if (g.tIn > g.stay || g.cash < 2 || g.happy < 18 || g.energy < 6) {
     think(g, g.cash < 2 ? 'th_broke' : g.happy < 18 ? 'th_unhappy' : g.energy < 6 ? 'th_tired' : 'th_home');
     g.cc = 0;
+    if (!reach('exit', i)) {
+      // no way to the gate on foot from here: take the park railway
+      for (const id in S.objs) {
+        const o = S.objs[id];
+        if (o.kind === 'coaster' && COASTERS[o.ctype].kind === 'train' && rideUsable(o) && !o.broken && reach(String(o.id), i)) return { kind: 'obj', id: o.id };
+      }
+    }
     return { kind: 'exit' };
   }
   if (g.toilet > 70) {
@@ -198,6 +234,7 @@ function chooseTarget(g, i) {
     if (reach('cat:treat', i)) return { kind: 'cat', need: 'treat' };
     think(g, 'th_nodrink'); g.happy -= 3;
   }
+  if (g.nausea > 55 && reach('cat:aid', i)) return { kind: 'cat', need: 'aid' };
   if ((g.nausea > 55 || g.energy < 30) && reach('bench', i)) return { kind: 'bench' };
   if (g.nausea > 70) return null; // too queasy for rides, just walk it off
   if (g.cash > 15 && Math.random() < 0.05) {
@@ -214,7 +251,7 @@ function chooseTarget(g, i) {
     const o = S.objs[id];
     if (!rideUsable(o)) continue;
     any = true;
-    if (!reach(String(o.id), i)) continue;
+    if (o.broken || !reach(String(o.id), i)) continue;
     const st = rideStats(o);
     if (st.I > g.tol[1] + (fans ? 2 : 0)) continue;
     if (o.queue.length >= queueMax(o)) continue;
@@ -246,7 +283,8 @@ function stallNextTo(tx, ty, need) {
   }
   return null;
 }
-const MAX_PAY = { hunger: 8, thirst: 6, treat: 6, gift: 12, hat: 14, toilet: 1 };
+const MAX_PAY = { hunger: 8, thirst: 6, treat: 6, gift: 12, hat: 14, toilet: 1, aid: 1 };
+const FOOD = { hunger: 1, thirst: 1, treat: 1 };
 
 function arrive(g) {
   const t = g.target;
@@ -260,7 +298,9 @@ function arrive(g) {
   if (t.kind === 'cat') {
     const o = stallNextTo(g.tx, g.ty, t.need);
     if (!o) return;
-    if (o.price > MAX_PAY[t.need] || o.price > g.cash) {
+    // at a food festival people are happy to pay a little more for something to eat
+    const fest = S.event && S.event.id === 'festival' && (t.need === 'hunger' || t.need === 'treat') ? 2 : 0;
+    if (o.price > MAX_PAY[t.need] + fest || o.price > g.cash) {
       think(g, 'th_expensive', o.id); g.happy -= 3; g.cool = 8;
       return;
     }
@@ -274,12 +314,15 @@ function arrive(g) {
     else if (t.need === 'toilet') { g.toilet = 0; g.happy += 3; }
     else if (t.need === 'gift') { g.gift = 1 + ((Math.random() * 5) | 0); g.happy += 10; think(g, 'th_gift'); }
     else if (t.need === 'hat') { g.hat = 1 + ((Math.random() * 5) | 0); g.happy += 8; think(g, 'th_hat'); }
+    else if (t.need === 'aid') { g.nausea = 0; g.happy += 4; think(g, 'th_aid'); }
+    // what is left of a snack or a drink has to go somewhere
+    if (FOOD[t.need] && Math.random() < 0.4) g.trash = 1;
     g.st = 'pause'; g.timer = rnd(1.5, 3);
     return;
   }
   const o = S.objs[t.id];
-  if (!o || !rideUsable(o) || o.queue.length >= queueMax(o) || o.price > g.cash) return;
-  g.st = 'queue'; g.obj = o.id; g.wait = 0;
+  if (!o || !rideUsable(o) || o.broken || o.queue.length >= queueMax(o) || o.price > g.cash) return;
+  g.st = 'queue'; g.obj = o.id; g.wait = 0; g.plat = platAt(o, idx(g.tx, g.ty));
   o.queue.push(g.id);
 }
 
@@ -323,7 +366,7 @@ function decide(g) {
 export function updateGuest(g, dt) {
   g.tIn += dt; g.cc -= dt; g.cool -= dt;
   if (g.emT > 0) g.emT -= dt;
-  g.hunger = Math.min(100, g.hunger + 0.22 * dt);
+  g.hunger = Math.min(100, g.hunger + (S.event && S.event.id === 'festival' ? 0.38 : 0.22) * dt);
   g.thirst = Math.min(100, g.thirst + (S.event && S.event.id === 'heat' ? 0.62 : 0.28) * dt);
   g.toilet = Math.min(100, g.toilet + 0.13 * dt);
   g.nausea = Math.max(0, g.nausea - 1.1 * dt);
@@ -355,7 +398,7 @@ export function updateGuest(g, dt) {
   g.walk += dt * g.sp * 9;
   g.prog += g.sp * (g.nausea > 60 ? 0.6 : 1) * dt;
   if (g.prog >= 1) {
-    g.tx = g.nx; g.ty = g.ny;
+    if (g.tx !== g.nx || g.ty !== g.ny) { g.tx = g.nx; g.ty = g.ny; stepOn(g); }
     decide(g);
   }
 }
@@ -372,7 +415,15 @@ export function unloadRider(g, o, tiles) {
   g.energy = Math.max(0, g.energy - 3);
   g.cc = 0;
   if (g.nausea > 72) { think(g, 'th_sick', o.id); g.happy -= 6; }
-  else think(g, st.E >= 6 ? 'th_wow' : 'th_great', o.id);
+  else if (o.kind === 'coaster' && COASTERS[o.ctype].kind === 'flume' && Math.random() < 0.5) {
+    // a soaking is twice as welcome in a heat wave
+    think(g, 'th_splash', o.id); g.happy = Math.min(100, g.happy + (S.event && S.event.id === 'heat' ? 6 : 2));
+  } else think(g, st.E >= 6 ? 'th_wow' : 'th_great', o.id);
+  // an on-ride photo to take home
+  if (o.photos && g.cash > 6 && Math.random() < 0.4) {
+    g.cash -= 3; g.happy = Math.min(100, g.happy + 1);
+    if (!net.quiet) { earn(3, 'rides'); o.income += 3; }
+  }
 }
 
 export function guestPos(g, out) {

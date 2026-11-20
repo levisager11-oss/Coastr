@@ -14,7 +14,7 @@ python3 -m http.server 8000 --directory game
 ```
 
 - There is no automated test suite in the repository. Verify changes by running the game.
-- `world.js`, `coaster.js`, `guests.js`, `sim.js`, `data.js`, `sync.js` and `net.js` never touch the
+- `world.js`, `coaster.js`, `guests.js`, `staff.js`, `sim.js`, `data.js`, `sync.js` and `net.js` never touch the
   DOM, so they can be imported in Node to build a park in code, call `tick(dt)` and inspect the
   result. Use this for balance and save/load checks. Node 22 has `WebSocket`, so playing together
   can be tested against the real relay: run each player in its own `worker_threads` Worker (each
@@ -61,8 +61,8 @@ TOKI_KEY="$TOKI_KEY" node /tmp/toki-upload.mjs .
   version posts an update on the game's page. `--dry-run` lists the files without uploading.
 - Achievement ids in `toki.json` must match `ACHIEVEMENTS` in `data.js` and the `award()` calls in
   `sim.js`. Uploads add and update achievements but never delete them.
-- High-score lists: the main list is park value, the `guests` list is the most guests at once
-  (`sendScores` in `main.js`). Scores and achievements come from the scenarios, never the sandbox.
+- High-score lists: the main list is park value, the `guests` list is the most guests at once, the
+  `challenges` list is the most challenges won in one park (`sendScores` in `main.js`). Scores and achievements come from the scenarios, never the sandbox.
   The three star achievements are sent from `noteStars` in `main.js`, not from `sim.js`.
 
 ### How Toki shows the game (this has caused real bugs)
@@ -94,6 +94,10 @@ Durable Object per room, at `wss://coastr-rooms.levisager.workers.dev` (`RELAY` 
   own. The host passes each guest's diff on to everyone, the sender included, so all games end up
   the same even when two players change one tile at once. A part of our own diff that we have
   changed again since is not taken back (`sent`).
+- Litter (`S.lit`) is a tile layer like the others, but only the host's game drops it and sweeps it
+  up; a guest's staff only look busy (`net.quiet`). Staff numbers (`S.staff`) are a setting in `SETS`.
+  Challenges live in `S.ch`, which the host's game keeps (`HOST_KEYS`); a player chooses one by setting
+  `S.chPick` (in `SETS`), and the host's game takes it up (`updateChallenges` in `sim.js`).
 - So any new way of changing the park works in a shared park as long as it changes `S` (tiles,
   `S.objs`, a key in `SETS`) and the money through `spend` / `earn`. A new field on an object is
   shared by itself; add it to `SKIP` in `sync.js` if it only matters while the game runs, or the
@@ -145,13 +149,36 @@ Durable Object per room, at `wss://coastr-rooms.levisager.workers.dev` (`RELAY` 
   feet are, not `S.h`.
 - Events (`S.event`), the year's tally (`S.yr`), awards (`S.awards`) and each ride's birthday
   (`o.born`, used by `buzz()` in `guests.js`) are part of the saved state.
+- Litter: `S.lit` holds 0 to 3 per path tile. It changes all the time, so it must never bump `S.pv`
+  (that would redraw the ground and throw away the path-finding cache); the renderer draws it per tile
+  each frame. `S.litter` is the total, counted once a second.
+- Staff: `S.staff` is how many handymen (`clean`), mechanics (`mech`) and entertainers (`fun`) are
+  employed. The people themselves are `S.crew`, made from those numbers by `syncCrew` (`staff.js`),
+  never saved. They are drawn like guests (`crewKit` in `render.js`).
+- A ride that has broken down has `o.broken` (the time it happened): nobody gets on, trains already out
+  finish their run. A mechanic, the repair service (`repairNow`) or, with no mechanic employed, two
+  months of waiting clear it. `rideUsable` stays true for a broken ride, so check `o.broken` as well.
+- A park saved before there was staff gets a few people hired when it is loaded (`S.staffNew`), so
+  it runs as it did; keep that when changing what litter and breakdowns cost.
 - `events` (in `world.js`) queues things for the UI: goals, research, achievements, month end.
 
-**Coasters**
+**Coasters and other tracked rides**
+- The log flume and the park railway are entries of `COASTERS` too (`kind: 'flume'` / `'train'`), built,
+  saved and shared like coasters: `o.kind` is `'coaster'` for all of them. Use `isCoaster(ctype)`
+  wherever only real coasters should count (coaster goals, coaster achievements, `att.best`).
+  A flume's boats are carried by the water (`flow`) and need a lift to go up; a railway keeps a steady
+  speed (`powered`) and needs no lift. Flags on the type switch pieces off (`noChain`, `noBoost`,
+  `noBrake`). `look` / `carLook` say which track and train drawing a type uses (`track.js`).
+- A railway can have more platforms: `stop` pieces. `isPlat(p)` is true for station and stop pieces;
+  `platforms(c)` lists them in track order and `accessTiles(o, plat)` gives one platform's path tiles.
+  A waiting guest remembers its platform (`g.plat`). The train's stay at a stop is part of the timing
+  (`sim.stops`, `DWELL` in `coaster.js`); there everyone gets off and whoever waits gets on
+  (`updateTrains` in `sim.js`).
 - A coaster is a list of pieces; `recompute(c)` runs the physics pass and sets `c.sim`, `c.E`,
   `c.I`, `c.Q`. Ratings exist as soon as the circuit is closed; the test ride is only a visual.
 - Piece types: `station`, `s`, `l` / `r` (tight turns), `wl` / `wr` (wide turns over three tiles),
-  `loop`, `cork`, `boost`, `brake`. A piece can cover several tiles: always use `pieceTiles` /
+  `loop`, `cork`, `boost`, `brake`, `photo` (on-ride camera: riders may buy a picture), `stop`. A new
+  type also has to go into `PIECES` in `sync.js`, or a friend's game refuses the track. A piece can cover several tiles: always use `pieceTiles` /
   `pieceCells` (`world.js`) and `pieceExit` (`coaster.js`) instead of assuming one tile.
 - The renderer draws a multi-tile piece in parts, one per tile, so trains and scenery sort correctly
   (`parts` in `buildGeo`). Cached drawing geometry is rebuilt when `S.tv` changes (terrain or water).
@@ -206,6 +233,9 @@ Durable Object per room, at `wss://coastr-rooms.levisager.workers.dev` (`RELAY` 
   scenery at the end. The build menu order is `SCENERY_ORDER`.
 - Research progress is "the first project with something still locked" (`researchNext`), so the
   `RESEARCH` list can be reordered and extended without breaking saves.
+- A park can be shared as a code (`parkCode` / `readCode` in `main.js`): the save as JSON, packed with
+  `deflate-raw` and written in base64, after the prefix `COASTR1`. A park loaded from a code always
+  becomes a sandbox park, so codes cannot be used to pass on stars, scores or achievements.
 - A new field of `S` must be added to both `serialize` and the key list in `deserialize`.
   Derived data (`sim`, `geo`, `S.trk`, `S.gmap`) is rebuilt on load and not saved. Guests are not
   saved individually, only their number.
@@ -223,6 +253,11 @@ Durable Object per room, at `wss://coastr-rooms.levisager.workers.dev` (`RELAY` 
   one tile would cost, `applyArea` does the work and records one undo step (`snapshot` / `restore`
   in `world.js`).
 - Rides, stalls and coaster stations are placed with a confirm bar on touch, directly on mouse.
+- Goals, the park's map and lists, the staff and the challenges are four tabs of one panel (`HUB` in
+  `ui.js`; panel types `goals`, `park`, `staff`, `tasks`). Put new park-wide screens there rather than
+  adding buttons to the top bar.
+- Photo mode (`setPhoto`): `ui.photo` hides everything but `#photobar` and the overlays, `look.dark`
+  forces day or night for the picture. The bar sits at the bottom, clear of Toki's fullscreen button.
 - In a shared park the top bar shows a pill with a dot per player (`#st-room`, opens the room
   panel); on phone layouts it takes the date's place in the first row. Other players' markers are
   drawn in `drawOverlays`.
@@ -268,6 +303,10 @@ Durable Object per room, at `wss://coastr-rooms.levisager.workers.dev` (`RELAY` 
   everything is drawn as shapes. `look.pics = false` switches the track and guest pictures off.
 - Track paths are `BPath` (a `Path2D` that records its bounds) so a part knows its picture's size.
   Anything that changes how a piece looks must clear `piece.geo` (colour changes already do).
+- A fence joins up with the fences on the tiles round it: the renderer passes `drawScenery` which
+  neighbours are fences (`nb`), and each combination gets a stamp of its own. New scenery that does
+  not move belongs in `STILL` in `render.js` (and in `LIT` if it has a lit look at night); scenery
+  that moves (`clock`, `windmill`, `fountain`, `flag`, `torch`) must stay out of it.
 - Rides and stalls are still drawn as shapes every frame because they move; they are now the
   largest part of a frame.
 - Tried and dropped: keeping each ride as its own picture refreshed every few frames. Uploading the
@@ -277,7 +316,9 @@ Durable Object per room, at `wss://coastr-rooms.levisager.workers.dev` (`RELAY` 
 **Scope**
 - Coastr is its own game. Keep names, art and content original rather than copying an existing
   commercial park game.
-- The owner asked to keep management simple: no staff, breakdowns or litter.
+- The owner asked to keep management simple. Staff, litter and breakdowns exist since 3.0, on purpose
+  in their simplest form: the player only chooses how many of each kind to employ. No patrol areas,
+  no orders, no per-person screens.
 
 ## Git
 
