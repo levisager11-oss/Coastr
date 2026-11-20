@@ -383,10 +383,13 @@ function tokiRoom(code) {
   try { if (window.toki && window.toki.room) window.toki.room(code); } catch (e) { /* invites are a bonus */ }
 }
 /** This player's name for the others; asked for the first time (or when force). Null when cancelled. */
+let tokiName = null; // the name Toki gives the player
 async function myName(force) {
+  if (tokiName && !force) return tokiName;
   if (settings.name && !force) return settings.name;
   const v = await askText(t('mp_name'), t('mp_name_q'), settings.name || t('mp_name_def'), 16);
   if (v === null) return null;
+  tokiName = null; // a name chosen here wins over Toki's
   settings.name = v || t('mp_name_def');
   saveSettings();
   return settings.name;
@@ -560,6 +563,7 @@ function hookToki() {
   try {
     if (!window.toki || !window.toki.onHost) return;
     tokiHooked = true;
+    if (window.toki.onName) window.toki.onName((n) => { tokiName = n; });
     window.toki.onHost(() => {
       if (net.on) return;
       if (!playing) {
