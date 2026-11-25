@@ -311,7 +311,8 @@ Durable Object per room, at `wss://coastr-rooms.levisager.workers.dev` (`RELAY` 
   largest part of a frame.
 - Tried and dropped: keeping each ride as its own picture refreshed every few frames. Uploading the
   changed pictures cost more than drawing the rides.
-- `shots/*.png` were captured from the running game at 1280x720. `cover.png` (1200x900: Toki shows
+- `shots/*.png` were captured from the running game at 1280x720. `cover.gif` (the animated cover
+  Toki shows in its game lists, 4:3, under 1 MB), `cover.png` (its still version, 1200x900: Toki shows
   covers at 4:3) and `banner.gif` (the 2:1 banner for Toki's home page; GIFs must stay under
   2 MB) were captured from the menu's demo park, the banner at 20 fps. Toki's `banner_url` points at
   `https://coastr.playtoki.app/banner.gif`, so keep the file in `game/`.
